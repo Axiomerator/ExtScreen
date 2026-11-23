@@ -118,6 +118,37 @@ Widget toolApp({
 
 一组设置使用 `generateSection`，可选用 `title` 和必要的 `footer`。单行是 `DecorationListItem`。组生成器向行提供位置，分隔线与圆角因此能在增删行后正确更新。连续分组以外的单张状态卡才直接使用 `Card`。
 
+### Windows 分组接缝的栅格修复
+
+用实际 Windows 窗口复查分组卡片，尤其是深色主题下的浅暗细纹。Prism 对首行绘制上圆角、对末行绘制下圆角、对中间行绘制直角。截图中的斜短纹只出现在有部分圆角的行一侧，在连续三行分组的两个接缝处方向相反。分隔线是水平矩形，排查应先看逐行绘制的填色覆盖和分数像素位置。[Prism 分组行源码][prism-list-selected] · [Prism 分隔线源码][prism-separator]
+
+ExtScreen 保留原有的 Prism 行、按压、焦点及标题对齐分隔线，仅给 Windows 多行分组加一层同色基底。基底在外缘使用 `AppShape.xl`，颜色取当前 `SurfaceScope` 的下一层，与行的实际填色一致。单行仍走 `generateSection`。这个写法可用于其他使用 Prism 0.1.3 的 Windows 页面。
+
+```dart
+import 'package:flutter/widgets.dart';
+import 'package:prism_ui/prism_ui.dart' as p;
+
+Widget windowsInsetGroup(String title, List<Widget> rows) {
+  if (rows.length < 2) {
+    return p.generateSection(title: title, items: rows);
+  }
+  return Column(children: [
+    p.ListHeader(title: title),
+    Builder(builder: (context) {
+      final fill = p.SurfaceScope.of(context).next
+          .colorOf(p.Theme.of(context).colorScheme);
+      return DecoratedBox(
+        decoration: ShapeDecoration(color: fill, shape: p.AppShape.xl),
+        child: p.generateGroup(rows),
+      );
+    }),
+  ]);
+}
+```
+
+持久回归测试在 `flutter_tester` 中以 125%（DPR 1.25）、1350 × 900 物理像素运行真实的 `WindowsScreen`，并加入 0.25 逻辑像素的纵向偏移。测试在分组左侧、标题分隔线开始之前采样接缝上下的 7 个物理像素。浅色对照中，修复前有采样点的红通道从基底的 253 降到 250，修复后 7 点均与基底一致。另一次使用截图深色填色的离屏 Canvas 对照覆盖了多个 DPR 与分数位置。125% 的结论适用于离屏回归，实际跨屏拖动仍按第 7 节验证。[Windows 分组实现](../ui/lib/windows_screen.dart) · [分组像素回归测试](../ui/test/windows_screen_test.dart)
+
+
 配置项有几种常见形态。
 
 | 需求 | 控件组合 | 交互 |
@@ -231,6 +262,15 @@ Future<void> showToolControls(
 
 写布局时直接读 `MediaQuery.sizeOf(context)` 或 `LayoutBuilder` 的约束；只在需要跨到原生窗口边界时换算物理像素。96 DPI 下 800 逻辑像素约为 800 物理像素，144 DPI 下同样 800 逻辑像素约为 1200 物理像素。再乘一次 DPI 会使分栏阈值和尺寸在跨屏时跳变。测试要拖回原屏，并观察窗口是否保持逻辑尺度。系统标题栏保留原生拖拽、最大化、恢复和任务栏行为。[Runner manifest](../ui/windows/runner/runner.exe.manifest) · [Win32 窗口实现](../ui/windows/runner/win32_window.cpp) · [Flutter 消息转发](../ui/windows/runner/flutter_window.cpp) · [Microsoft WM_DPICHANGED][ms-dpi]
 
+### 虚拟显示驱动与当前会话
+
+驱动管理位于 Windows「设置 → 虚拟显示驱动」。Flutter 面板和常驻主机以当前用户身份运行。点击安装或确认卸载后，主机在后台启动同一可执行文件的专用驱动命令，仅通过 Windows `runas` 为这个子进程请求管理员授权。签名驱动包的位置由主机按发布或开发目录解析。常驻主机持有驱动操作与串流会话共用的显示资源许可，有设备连接时须先断开，提权和驱动更新期间也会暂缓新的串流会话。[驱动操作和提权边界](../host/src/driver_control.rs) · [驱动安装、探测和路径](../host/src/driver_setup.rs) · [会话资源互斥](../host/src/transport/server.rs)
+
+`install_display_driver` 和 `uninstall_display_driver` 的即时响应表示请求已受理或已处于目标状态。面板继续轮询 `status.display_driver`，通过 `operation`、`error` 与 `restart_required` 呈现正在处理、取消授权、失败或需要重启。后端以实际 PnP 设备状态判断驱动是否可用；`bundle_available` 单独说明安装所需文件是否可定位。等待重启、操作繁忙或设备连接时，禁用不适用的驱动按钮。[主机命令和状态接口](../host/src/dashboard.rs) · [Prism 驱动设置分组](../ui/lib/windows_screen.dart)
+
+驱动可用性和当前视频来源是两个状态。用户连接后，`stream_mode: extended` 表示捕获源确实是受 ExtScreen 管理的虚拟副屏；`fallback` 表示当前在镜像主显示器。界面从当前捕获源显示「主显示器」或「虚拟显示器」。检查状态时，应实际连接并查看 Windows 的显示布局与捕获来源，再核对面板的提示。[捕获来源与模式发布](../host/src/capture/wgc.rs) · [状态字段生成](../host/src/driver_control.rs)
+
+
 ## 8. 语言和主题
 
 `AppearanceController` 管理语言与深浅色，由 `PrismApp` 读取，页面从同一偏好取得本地化文字。Android 通过小型通道把偏好写到原生首选项，两条 Flutter 启动路径分别载入。Windows 保存到用户本地应用数据目录。初次运行按系统默认值选取，之后以用户设置为准。主题切换保持当前目的地和原生连接。
@@ -240,6 +280,16 @@ Future<void> showToolControls(
 - 同时检查主题切换后的当前页面、侧栏选中态、菜单、对话框和 Windows 标题栏。串流视频仍由远程电脑提供，客户端的浅色或深色设置改变的是控制界面。
 
 [ExtScreen 偏好和本地化接口](../ui/lib/appearance.dart) · [Android 偏好通道](../client/app/src/main/java/com/extscreen/AppearanceChannel.kt) · [Flutter 应用国际化][flutter-l10n]
+
+Windows 继续使用 Prism 默认的 Segoe UI 绘制其已有字符，缺字时按顺序回退到系统的 `Microsoft YaHei UI` 与 `Microsoft YaHei`。回退配置放在两套共用的主题入口，在浅色和深色同时生效，对中文界面文案以及英文界面中的中文主机名都适用。Android 维持自己的系统字体。发布包通过系统字体名称引用这两套字形，包内无需另带字体文件。[Windows 字体配置](../ui/lib/main.dart) · [Prism 平台默认字体][prism-theme-data]
+
+```dart
+// 设置 ThemeData 的回退列表，主字体由 Prism 按平台选择。
+fontFamilyFallback: Platform.isWindows
+    ? const ['Microsoft YaHei UI', 'Microsoft YaHei']
+    : null,
+```
+
 
 ## 9. 开发环境与验证
 
@@ -272,10 +322,29 @@ cargo build --release --locked --bin extscreen-host
 
 Android 调试输出见 `client\app\build\outputs\apk\debug\app-debug.apk`。Windows 面板位于 `ui\build\windows\x64\runner\Release\`，依赖同目录的 DLL 和 `data\`，安装时按整个目录部署。发布签名、Cargo Android ABI、Windows 便携 ZIP 和输出目录见 [README 构建说明](../README.md#从源码构建)。调试真机与发布通用 APK 分别验证支持的 ABI。构建产物、Pub 缓存、Java/Android SDK 路径与签名配置属于本机环境，依赖版本和锁文件归项目维护。
 
+### Windows 便携包的路径约定
+
+Flutter Runner、运行库和 `data/` 保持相邻，常驻主机和驱动放在 `support/` 下。用户解压整个目录后打开 `ExtScreen.exe`。同一结构也适合用手工启动验证打包，日常源码调试仍用上一节的构建命令。
+
+```text
+ExtScreen.exe
+flutter_windows.dll
+data/
+support/
+  extscreen-host.exe
+  driver/
+    vdd_settings.xml
+    vdd/
+      MttVDD.inf
+```
+
+控制面板按自身可执行文件的位置寻找 `support/extscreen-host.exe`，兼容旧版本同目录的后端和仓库的 `target/` 开发布局；显式配置 `EXTSCREEN_HOST_EXE` 时使用该路径。启动后端时将控制面板的完整路径传入 `EXTSCREEN_DASHBOARD_PATH`，供托盘操作唤回同一面板。后端独立按自身的路径找到随包的 `driver/vdd/` 与分辨率配置。用完整解压目录验证一遍托盘重开、主机状态和驱动文件探测，避免用工作目录偶然掩盖相对路径问题。[便携 ZIP 脚本](../scripts/package_windows.ps1) · [Flutter 启动桥](../ui/lib/windows_bridge.dart) · [驱动包解析](../host/src/driver_setup.rs)
+
+
 | 检查 | 验证方法 |
 | --- | --- |
 | 手机和宽屏 | 运行 [Android widget 测试](../ui/test/android_screen_test.dart)，它覆盖 350×620 手机、1100×720 宽屏、配对、偏好和串流面板。按需补充真实手机、平板横竖屏、分屏和键盘弹起。 |
-| Windows 界面 | 运行 [Windows widget 测试](../ui/test/windows_screen_test.dart)，再检查窄窗与宽窗里的概览、配对和设置。用 100% 与 150% 双屏来回拖动，检查内容逻辑尺寸与焦点。 |
+| Windows 界面 | 运行 [Windows widget 测试](../ui/test/windows_screen_test.dart)，再检查窄窗与宽窗里的概览、配对和设置。用 125% 离屏像素用例检查组内接缝；实际用不同缩放的显示器来回拖动，检查逻辑尺寸与焦点。 |
 | 行与弹层 | 打开菜单再变更语言和主题，检查勾选值、弹层宽度、长文字和关闭后的焦点。核对滚动不把焦点藏在悬浮顶栏下。 |
 | 串流 | 设备首次配对、同端重连、断线回到连接页。打开再关闭控制浮层后，验证画面、光标皮肤、触控和笔迹。检查从视频区域开始拖动跨过控制入口时的输入归属。 |
 | 性能与可读性 | 分别看实际手机和平板的 DPI、帧率和字重。浅色、深色，以及明暗远程桌面上都检查清晰度。遇到玻璃问题时用真实 Android 图形后端确认，而非只依据 widget 截图。 |
@@ -309,6 +378,9 @@ Android 调试输出见 `client\app\build\outputs\apk\debug\app-debug.apk`。Win
 [prism-glass]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/liquid_glass.dart
 [prism-license]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/LICENSE
 [prism-notice]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/NOTICE
+[prism-list-selected]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/list_selected.dart
+[prism-separator]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/list_row_separator.dart
+[prism-theme-data]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/theme_data.dart
 [flutter-viewport]: https://github.com/flutter/flutter/blob/3.50.0/packages/flutter/lib/src/widgets/viewport.dart
 [flutter-completed]: https://api.flutter.dev/flutter/widgets/TransitionRoute/completed.html
 [flutter-l10n]: https://docs.flutter.dev/ui/internationalization

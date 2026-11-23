@@ -9,15 +9,24 @@
     Needs: Rust (with the Android targets and cargo-ndk), the Android SDK + NDK, JDK 17,
     FVM with the pinned Flutter SDK. The APK is signed when a keystore is configured (see client/app/build.gradle.kts:
     EXTSCREEN_KEYSTORE_PROPERTIES or client/keystore.properties); otherwise it is left unsigned.
+.PARAMETER OutputDirectory
+    Output directory for the two packages and their checksums. Defaults to the repository's dist directory.
 .PARAMETER SkipTests
     Skip the unit tests.
 #>
 [CmdletBinding()]
-param([switch]$SkipTests)
+param(
+    [switch]$SkipTests,
+    [string]$OutputDirectory
+)
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$dist = Join-Path $root "dist"
+$dist = if ($OutputDirectory) {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+} else {
+    Join-Path $root 'dist'
+}
 
 function Step($text) { Write-Host ""; Write-Host "==> $text" -ForegroundColor Cyan }
 function Run($exe, [string[]]$arguments, $dir = $root) {

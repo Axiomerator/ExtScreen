@@ -105,6 +105,7 @@ impl Drop for SessionGuard {
     fn drop(&mut self) {
         let shared = &self.shared;
         shared.client_connected.store(false, Ordering::Relaxed);
+        shared.capture_is_extended.store(false, Ordering::Relaxed);
         shared.injector.lock().unwrap_or_else(|e| e.into_inner()).release_all();
         shared.keyboard.release_all();
         *shared.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -351,6 +352,10 @@ async fn run_session(
     ctrl_tx: mpsc::Sender<ControlMessage>,
     ctrl_rx: mpsc::Receiver<ControlMessage>,
 ) {
+    let Ok(_display_use) = shared.display_use.try_acquire() else {
+        info!("Deferring incoming tablet while display driver setup is running");
+        return;
+    };
     let AuthedConn { reader, writer, hello, new_secret, peer, usb_link: _usb_link } = conn;
     let link_kind = if peer.ip().is_loopback() {
         LinkKind::UsbCable

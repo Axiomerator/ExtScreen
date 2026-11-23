@@ -136,6 +136,10 @@ pub struct HostShared {
     pub request_idr: AtomicBool,
     /// Capture skips encoding entirely while nobody is connected.
     pub client_connected: AtomicBool,
+    /// Exclusively held by an active stream or a display-driver operation.
+    pub display_use: Arc<tokio::sync::Semaphore>,
+    /// Whether WGC has delivered a frame from the independent MttVDD display.
+    pub capture_is_extended: AtomicBool,
     pub is_running: AtomicBool,
     pub display: Mutex<ActiveDisplayInfo>,
     pub target_fps: AtomicU32,
@@ -178,6 +182,8 @@ impl HostShared {
             latest_idr: Mutex::new(None),
             request_idr: AtomicBool::new(true),
             client_connected: AtomicBool::new(false),
+            display_use: Arc::new(tokio::sync::Semaphore::new(1)),
+            capture_is_extended: AtomicBool::new(false),
             is_running: AtomicBool::new(true),
             display: Mutex::new(display),
             target_fps: AtomicU32::new(default_fps),

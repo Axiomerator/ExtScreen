@@ -29,6 +29,9 @@ class ExtScreenApp extends StatelessWidget {
     visualDensity: Platform.isWindows
         ? prism.VisualDensity.compact
         : prism.VisualDensity.standard,
+    fontFamilyFallback: Platform.isWindows
+        ? const ['Microsoft YaHei UI', 'Microsoft YaHei']
+        : null,
     colorScheme: prism.ColorScheme.fromSeed(
       seedColor: const Color(0xFF236DD8),
       brightness: brightness,

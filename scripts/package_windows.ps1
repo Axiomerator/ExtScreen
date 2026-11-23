@@ -49,10 +49,16 @@ try {
         foreach ($file in (Get-ChildItem -LiteralPath $dashboard -Recurse -File)) {
             $relative = $file.FullName.Substring($prefix.Length)
             if ($file.Extension -eq '.pdb' -or $relative -eq 'extscreen-host.exe') { continue }
+            if ($relative -eq 'extscreen.exe') {
+                $relative = 'ExtScreen.exe'
+            }
             Add-ZipFile $archive $file.FullName $relative
         }
 
-        Add-ZipFile $archive $hostFile 'extscreen-host.exe'
+        Add-ZipFile $archive $hostFile 'support/extscreen-host.exe'
+        # The native host's app-local CRT goes beside the host executable.
+        Add-ZipFile $archive (Join-Path $dashboard 'vcruntime140.dll') 'support/vcruntime140.dll'
+        Add-ZipFile $archive (Join-Path $root 'docs\WINDOWS_QUICK_START.txt') '开始使用.txt'
         foreach ($relative in @(
             'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'ARCHITECTURE.md', 'DESIGN.md',
             'host\assets\extscreen-512.png', 'driver\README.md', 'driver\vdd_settings.xml',
@@ -60,14 +66,14 @@ try {
             'ExtScreen-USB-Tethering-Setup.cmd', 'scripts\setup_usb_tethering.ps1',
             'ExtScreen-USB-Setup.cmd', 'scripts\usb_setup.ps1'
         )) {
-            Add-ZipFile $archive (Join-Path $root $relative) $relative
+            Add-ZipFile $archive (Join-Path $root $relative) "support/$relative"
         }
         $uiGuide = 'docs\PRISM_UI_DEVELOPMENT.md'
         if (Test-Path -LiteralPath (Join-Path $root $uiGuide) -PathType Leaf) {
-            Add-ZipFile $archive (Join-Path $root $uiGuide) $uiGuide
+            Add-ZipFile $archive (Join-Path $root $uiGuide) "support/$uiGuide"
         }
         foreach ($file in @('MttVDD.inf', 'MttVDD.dll', 'mttvdd.cat', 'LICENSE.txt')) {
-            Add-ZipFile $archive (Join-Path $root "installer\redist\vdd\$file") "driver\vdd\$file"
+            Add-ZipFile $archive (Join-Path $root "installer\redist\vdd\$file") "support/driver/vdd/$file"
         }
     } finally {
         $archive.Dispose()

@@ -15,7 +15,7 @@ use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
 use windows_capture::{
     capture::{Context, GraphicsCaptureApiHandler},
     frame::Frame,
-    graphics_capture_api::InternalCaptureControl,
+    graphics_capture_api::{GraphicsCaptureApi, InternalCaptureControl},
     monitor::Monitor,
     settings::{
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
@@ -645,7 +645,7 @@ impl GraphicsCaptureApiHandler for ScreenCaptureHandler {
         }
         if !self.is_virtual && self.last_monitor_check.elapsed() >= Duration::from_millis(500) {
             self.last_monitor_check = Instant::now();
-            if Monitor::enumerate().ok().is_some_and(|ms| ms.iter().any(is_virtual_monitor)) {
+            if find_virtual_display(Duration::ZERO).is_some() {
                 info!("Virtual display is now active; switching WGC capture from fallback monitor to virtual display");
                 capture_control.stop();
                 return Ok(());
@@ -685,6 +685,9 @@ impl GraphicsCaptureApiHandler for ScreenCaptureHandler {
             return Ok(());
         }
 
+        if self.shared.client_connected.load(Ordering::Relaxed) {
+            self.shared.capture_is_extended.store(self.is_virtual, Ordering::Relaxed);
+        }
         let gpu = state.encoder.as_ref().is_some_and(|e| e.uses_gpu_input());
         state.last_frame_at = captured_at;
 
@@ -808,10 +811,14 @@ impl ScreenCaptureHandler {
     }
 }
 
-fn is_virtual_monitor(m: &Monitor) -> bool {
-    m.name()
-        .map(|n| n.contains("VDD") || n.contains("Virtual") || n.contains("Indirect") || n.contains("Mtt"))
-        .unwrap_or(false)
+fn tablet_monitor() -> Option<(Monitor, ActiveDisplayInfo)> {
+    let source = virtual_display::attached_source_name()?;
+    let monitor = Monitor::enumerate().ok()?.into_iter().find(|monitor| {
+        monitor.device_name().is_ok_and(|name| name.eq_ignore_ascii_case(&source))
+    })?;
+    let info = monitor_info(&monitor).ok()?;
+    // The primary source owns (0, 0); a monitor cloned from it is not an extension.
+    (info.left != 0 || info.top != 0).then_some((monitor, info))
 }
 
 fn monitor_info(monitor: &Monitor) -> Result<ActiveDisplayInfo> {
@@ -820,33 +827,21 @@ fn monitor_info(monitor: &Monitor) -> Result<ActiveDisplayInfo> {
         .ok_or_else(|| anyhow!("GetMonitorInfoW failed for the selected monitor"))
 }
 
-fn select_monitor() -> Result<(Monitor, ActiveDisplayInfo)> {
-    let monitors = Monitor::enumerate()?;
-    info!("Found {} active display monitors", monitors.len());
-
-    let monitor = if let Some(m) = monitors.iter().find(|m| is_virtual_monitor(m)) {
-        info!("Selected Virtual Display: '{}'", m.name().unwrap_or_default());
-        *m
-    } else if let Some(m) = monitors.get(1) {
-        info!("Selected secondary monitor index 1: '{}'", m.name().unwrap_or_default());
-        *m
-    } else if let Some(m) = monitors.first() {
-        warn!("VDD monitor not found; falling back to primary monitor: '{}'", m.name().unwrap_or_default());
-        *m
-    } else {
-        return Err(anyhow!("No monitors available for capture"));
-    };
-
-    let info = monitor_info(&monitor)?;
-    Ok((monitor, info))
+fn select_monitor() -> Result<(Monitor, ActiveDisplayInfo, bool)> {
+    if let Some(selected) = tablet_monitor() {
+        info!("Selected MttVDD extended display");
+        return Ok((selected.0, selected.1, true));
+    }
+    let primary = Monitor::primary()?;
+    warn!("MttVDD extension unavailable; mirroring primary monitor");
+    Ok((primary, monitor_info(&primary)?, false))
 }
 
-/// Geometry of the virtual (tablet) monitor, once Windows lists it after being attached.
+/// Geometry of the tablet's independent desktop source, once Windows attaches it.
 pub fn find_virtual_display(timeout: Duration) -> Option<ActiveDisplayInfo> {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = Monitor::enumerate().ok().and_then(|ms| ms.into_iter().find(is_virtual_monitor));
-        if let Some(info) = found.and_then(|m| monitor_info(&m).ok()) {
+        if let Some((_, info)) = tablet_monitor() {
             return Some(info);
         }
         if Instant::now() >= deadline {
@@ -858,10 +853,21 @@ pub fn find_virtual_display(timeout: Duration) -> Option<ActiveDisplayInfo> {
 
 /// Selects the tablet's monitor and returns its geometry without starting capture.
 pub fn detect_display() -> Result<ActiveDisplayInfo> {
-    select_monitor().map(|(_, info)| info)
+    select_monitor().map(|(_, info, _)| info)
 }
 
 pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>) -> Result<()> {
+    // Windows 10 can capture with its system border and default update interval.
+    let border = if GraphicsCaptureApi::is_border_settings_supported()? {
+        DrawBorderSettings::WithoutBorder
+    } else {
+        DrawBorderSettings::Default
+    };
+    let interval = if GraphicsCaptureApi::is_minimum_update_interval_supported()? {
+        MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1))
+    } else {
+        MinimumUpdateIntervalSettings::Default
+    };
     // Validate initial monitor existence (it is legitimately absent while detached).
     if !virtual_display::is_detached() {
         let _ = select_monitor()?;
@@ -923,7 +929,7 @@ pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>)
                     thread::sleep(Duration::from_millis(100));
                     continue;
                 }
-                let (monitor, disp_info) = match select_monitor() {
+                let (monitor, disp_info, is_virtual) = match select_monitor() {
                     Ok(res) => res,
                     Err(e) => {
                         warn!("Could not detect active monitor: {:#}. Retrying in 1s...", e);
@@ -932,7 +938,6 @@ pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>)
                     }
                 };
 
-                let is_virtual = is_virtual_monitor(&monitor);
                 *cap_shared.display.lock().unwrap_or_else(|e| e.into_inner()) = disp_info;
                 cap_shared
                     .injector
@@ -950,39 +955,26 @@ pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>)
                     is_virtual,
                 };
 
-                let settings = |interval: MinimumUpdateIntervalSettings| {
-                    Settings::new(
-                        monitor,
-                        CursorCaptureSettings::WithoutCursor,
-                        DrawBorderSettings::WithoutBorder,
-                        SecondaryWindowSettings::Default,
-                        interval,
-                        DirtyRegionSettings::Default,
-                        ColorFormat::Bgra8,
-                        ctx.clone(),
-                    )
-                };
-                let fast = settings(MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1)));
-                let fallback = settings(MinimumUpdateIntervalSettings::Default);
+                let settings = Settings::new(
+                    monitor,
+                    CursorCaptureSettings::WithoutCursor,
+                    border,
+                    SecondaryWindowSettings::Default,
+                    interval,
+                    DirtyRegionSettings::Default,
+                    ColorFormat::Bgra8,
+                    ctx,
+                );
 
                 info!(
                     "WGC Capture session starting for display ({}x{} @ {}Hz)...",
                     disp_info.width, disp_info.height, disp_info.refresh_hz
                 );
-                let result = match ScreenCaptureHandler::start(fast) {
-                    Err(windows_capture::capture::GraphicsCaptureApiError::GraphicsCaptureApiError(
-                        windows_capture::graphics_capture_api::Error::MinimumUpdateIntervalUnsupported,
-                    )) => {
-                        info!("Custom WGC update interval unsupported on this Windows build; using default");
-                        ScreenCaptureHandler::start(fallback)
-                    }
-                    other => other,
-                };
-
-                if let Err(e) = result {
+                if let Err(e) = ScreenCaptureHandler::start(settings) {
                     warn!("WGC capture session ended: {:?}", e);
                 }
 
+                cap_shared.capture_is_extended.store(false, Ordering::Relaxed);
                 // Release GPU encoder/cached textures bound to the ended session's D3D11 device.
                 if let Ok(mut state) = cap_state.lock() {
                     state.invalidate_gpu_resources();

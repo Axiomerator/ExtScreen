@@ -30,9 +30,16 @@ Write-Host "====================================================================
 Write-Host "   ExtScreen first-time setup (about 2 minutes, one time only)" -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 
+function Get-MttVddDevice {
+    Get-PnpDevice -Class Display -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+        $ids = Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue
+        $ids.Data -contains 'Root\MttVDD'
+    } | Select-Object -First 1
+}
+
 # 1. Virtual display driver
 Step 1 "Virtual display driver (makes the tablet a real second monitor)"
-$vdd = Get-PnpDevice -InstanceId "ROOT\DISPLAY\0000" -ErrorAction SilentlyContinue
+$vdd = Get-MttVddDevice
 $pkgDir = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
 $haveVddPkg = [bool](Get-ChildItem $pkgDir -Filter "*Virtual-Display-Driver*" -Directory -ErrorAction SilentlyContinue)
 if (-not $vdd -and -not $haveVddPkg) {
@@ -45,14 +52,13 @@ if (-not $vdd -and -not $haveVddPkg) {
 $drv = Join-Path $root "driver\enable_virtual_display.ps1"
 if (Test-Path $drv) {
     # Installing/configuring the driver needs administrator rights; elevate when not active or not configured.
-    $vdd = Get-PnpDevice -InstanceId "ROOT\DISPLAY\0000" -ErrorAction SilentlyContinue
-    $regVddPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE\MikeTheTech\VirtualDisplayDriver" -Name "VDDPATH" -ErrorAction SilentlyContinue).VDDPATH
-    if ($vdd -and $vdd.Status -eq "OK" -and $regVddPath -eq "C:\VirtualDisplayDriver") {
-        Ok "Virtual display is active and configured with tablet display modes."
+    $vdd = Get-MttVddDevice
+    if ($vdd -and $vdd.Status -eq "OK") {
+        Ok "Virtual display is active."
     } else {
         Write-Host "       Configuring virtual display driver & resolutions (Windows will ask for administrator permission)..." -ForegroundColor Gray
-        Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$drv`""
-        $vdd = Get-PnpDevice -InstanceId "ROOT\DISPLAY\0000" -ErrorAction SilentlyContinue
+        Start-Process powershell -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$drv`" -Install"
+        $vdd = Get-MttVddDevice
         if ($vdd -and $vdd.Status -eq "OK") { Ok "Virtual display is active." }
         else { Warn "Virtual display not active yet."; $todo.Add("Run setup.bat again and accept the administrator prompt (or reboot once).") }
     }

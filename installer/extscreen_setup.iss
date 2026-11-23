@@ -18,7 +18,7 @@
 
 #define MyAppName "ExtScreen"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.3.0"
 #endif
 #define MyAppPublisher "ExtScreen contributors"
 #define MyAppURL "https://github.com/Axiomerator/ExtScreen"
@@ -57,7 +57,7 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-MinVersion=10.0.18362
+MinVersion=10.0.19041
 UninstallDisplayIcon={app}\{#DashboardExeName}
 UninstallDisplayName={#MyAppName}
 VersionInfoVersion={#MyAppVersion}

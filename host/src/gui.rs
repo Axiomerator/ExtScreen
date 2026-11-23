@@ -125,6 +125,10 @@ pub fn close_desktop() {
     }
 }
 
+pub fn dashboard_window() -> HWND {
+    unsafe { FindWindowW(DASHBOARD_CLASS, None).unwrap_or_default() }
+}
+
 pub fn dashboard_visible() -> bool {
     unsafe {
         FindWindowW(DASHBOARD_CLASS, None)
@@ -143,9 +147,21 @@ pub fn show_dashboard() {
     let executable = std::env::var_os("EXTSCREEN_DASHBOARD_PATH")
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .map(|exe| exe.with_file_name("extscreen.exe"))
+            let exe = std::env::current_exe().ok()?;
+            let adjacent = exe.with_file_name("extscreen.exe");
+            if adjacent.is_file() {
+                return Some(adjacent);
+            }
+            let directory = exe.parent()?;
+            if directory
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case("support"))
+            {
+                return directory
+                    .parent()
+                    .map(|parent| parent.join("ExtScreen.exe"));
+            }
+            Some(adjacent)
         });
     if let Some(executable) = executable {
         if let Err(err) = Command::new(&executable).spawn() {

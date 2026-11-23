@@ -18,7 +18,7 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 - **Prism UI。** Windows 和安卓共享 Flutter + Prism UI 控件。安卓连接页适配手机和平板，串流中可通过液态玻璃浮层调整控制选项。两端都可在「设置 → 外观」中选择简体中文或 English、浅色或深色。
 
 - **Windows 扩展显示。** Windows 会识别到一块独立的显示器，可以在系统设置里调整位置，并把窗口拖到平板上。驱动支持设备面板分辨率时可以逐像素显示。虚拟屏支持 60–144 Hz，实际可用模式取决于设备和驱动。
-- **USB 有线和局域网。** 支持 USB 网络共享、Wi-Fi 和 ADB 直连。通过 USB 网络共享连接时，电脑会自动发现设备所在的链路，码率最高可达 120 Mbps。已通过 PIN 配对的设备会自动重连。
+- **USB 有线和局域网。** 支持 USB 网络共享、Wi-Fi 和 ADB 直连。通过 USB 网络共享连接时，电脑会自动发现设备所在的链路，码率最高可达 120 Mbps。USB 网络共享和局域网可直接使用便携包。已通过 PIN 配对的设备会自动重连。
 - **鼠标光标。** 在平板本地绘制 Windows 光标，静止画面上也能及时显示位置变化。触控和用笔时显示落点指示器，移动鼠标后恢复鼠标光标。`.ani` 动态皮肤在平板端显示首帧图形。
 - **触控笔与多点触控。** 支持笔压曲线、倾斜、悬停、笔身按键映射为右键或橡皮擦，以及仅用笔模式、双指滚动和捏合缩放。
 - **低延迟串流。** Windows 端使用 GPU 采集，优先使用硬件 HEVC 或 H.264 编码。安卓端硬件解码。串流支持自适应码率，笔下可显示本地预绘笔迹。
@@ -28,24 +28,26 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 
 | 设备或连接方式 | 要求 |
 | --- | --- |
-| Windows 电脑 | Windows 10 1903 或更新版本，或 Windows 11（x64）。建议使用支持硬件视频编码的 NVIDIA、AMD 或 Intel 显卡。 |
+| Windows 电脑 | Windows 10 2004 或更新版本，或 Windows 11（x64）。Windows N 版需要启用 [Media Feature Pack](https://support.microsoft.com/en-us/windows/experience/platform-variants/media-feature-pack-for-windows-n)。建议使用支持硬件视频编码的 NVIDIA、AMD 或 Intel 显卡。 |
 | 安卓设备 | Android 8.0 或更新版本，支持 `arm64-v8a`、`armeabi-v7a` 和 `x86_64`，串流界面横屏使用。触控笔可选。 |
 | USB | 使用能传输数据的 USB 线。按设备支持情况选择 USB 网络共享或 ADB 直连。 |
 | Wi-Fi 或局域网 | 电脑与安卓设备在同一局域网内，Windows 将该网络设为「专用网络」。无线连接建议使用 5 GHz Wi-Fi。 |
 
 ## 快速开始
 
+升级时先从系统托盘退出旧版，再把新的 Windows ZIP 完整解压到新目录。已安装且正常的 MttVDD 驱动会继续使用。
+
 如发布页暂未提供所需发行包，可按[从源码构建](#从源码构建)操作。
 
-1. 在 Windows 上，从[发布页](https://github.com/Axiomerator/ExtScreen/releases)下载 `ExtScreen-<version>-Windows-x64.zip` 并完整解压。首次使用且尚未安装 MttVDD 时，运行同目录里的 `ExtScreen-Display-Driver-Setup.cmd`，按提示授权或重启。
-2. 下载并在安卓设备上安装 `ExtScreen-<version>.apk`。如果系统提示，允许当前安装来源。由早期调试或验收版改装正式发行版时，Android 要求先卸载签名不同的旧包。卸载会清除旧版设置和配对。
-3. 运行解压目录中的 `extscreen.exe`。控制面板会启动同目录的主机并显示 6 位配对 PIN。也可通过系统托盘图标重新打开控制面板。
+1. 在 Windows 上，从[发布页](https://github.com/Axiomerator/ExtScreen/releases)下载 `ExtScreen-<version>-Windows-x64.zip`，完整解压后双击 `ExtScreen.exe`。包内已带 Flutter、Visual C++ 运行库和已签名的 MttVDD 驱动。控制面板会自动启动主机并显示 6 位配对 PIN，也可通过系统托盘图标重新打开。
+2. 若概览提示虚拟显示驱动未安装，点击 **安装驱动**，并在 Windows 提示中确认管理员权限。也可在 **设置 → 虚拟显示驱动** 安装或卸载驱动。驱动就绪后，下一次连接会尝试将平板作为扩展屏使用。
+3. 下载并在安卓设备上安装 `ExtScreen-<version>.apk`。如果系统提示，允许当前安装来源。由早期调试或验收版改装正式发行版时，Android 要求先卸载签名不同的旧包。卸载会清除旧版设置和配对。
 4. 按所用方式连接。
    - **USB 网络共享（推荐给支持该功能的设备）**。插上数据线，在安卓端点击 **开启 USB 网络共享**，开启系统设置中的 USB 网络共享，再回到 ExtScreen。在 **USB** 分区中选中电脑，首次连接输入控制面板上的 PIN。以后插线并开启共享时，已配对设备可以自动连接。
    - **Wi-Fi 或局域网**。在安卓端的 **局域网** 中选中电脑，或手动输入电脑的 IPv4 地址。首次连接时输入 PIN。
-   - **直接 USB**。启用安卓 USB 调试并授权这台电脑，然后在安卓端选择 **USB 直连**。首次连接时在 Windows 控制面板确认。需要绑定 Android Open Accessory 驱动时，可运行解压目录中的 `ExtScreen-USB-Setup.cmd`。
+   - **直接 USB**。使用 USB 调试直连时，电脑需有 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)。在安卓端启用 USB 调试并授权这台电脑，再选择 **USB 直连**。也可使用 Android Open Accessory（AOA），按需运行 `support\ExtScreen-USB-Setup.cmd` 绑定 Windows 自带的 WinUSB 驱动。首次连接时在 Windows 控制面板确认。
 
-连接后，进入 Windows **设置 → 系统 → 显示**，选择扩展桌面，拖动新显示器图块以调整相对位置。
+连接后，可在 Windows **设置 → 系统 → 显示** 拖动新显示器图块，调整平板与其他屏幕的相对位置。
 
 ### 使用方式
 
@@ -58,10 +60,10 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 
 | 现象 | 处理方法 |
 | --- | --- |
-| 已开启 USB 网络共享，安卓端找不到电脑 | 确认 Windows 主机程序正在运行。运行解压目录中的 `ExtScreen-USB-Tethering-Setup.cmd` 并确认管理员授权。该脚本会为有线 USB 子网配置防火墙规则。 |
-| 开启 USB 网络共享后，电脑上网中断 | 运行 `ExtScreen-USB-Tethering-Setup.cmd`。它会让原有 Wi-Fi 或以太网的路由优先级高于 USB 网络共享。 |
+| 已开启 USB 网络共享，安卓端找不到电脑 | 确认 Windows 主机程序正在运行。运行 `support\ExtScreen-USB-Tethering-Setup.cmd` 并确认管理员授权。该脚本会为有线 USB 子网配置防火墙规则。 |
+| 开启 USB 网络共享后，电脑上网中断 | 运行 `support\ExtScreen-USB-Tethering-Setup.cmd`。它会让原有 Wi-Fi 或以太网的路由优先级高于 USB 网络共享。 |
 | Wi-Fi 列表找不到电脑 | 确认两台设备位于同一局域网，并在 Windows 网络设置中选择「专用网络」。也可以在安卓端手动填写电脑的 IPv4 地址。 |
-| Windows 没有出现第二块显示器 | 检查虚拟显示驱动是否已安装。在 Windows 显示设置中选择扩展桌面。需要检查或安装驱动时，运行 `ExtScreen-Display-Driver-Setup.cmd`。 |
+| Windows 没有出现第二块显示器 | 在控制面板查看虚拟显示驱动状态。安装完成后重新连接安卓设备。如仍未扩展，检查 Windows 显示设置中的新屏幕和控制面板的串流模式。 |
 | PIN 错误或找不到 PIN | 打开 Windows 控制面板，在 **概览 → 设备配对** 点击 **更新 PIN**。 |
 | Wi-Fi 画面模糊或卡顿 | 将码率设为 **自动**，靠近路由器并优先使用 5 GHz Wi-Fi，或使用有线 USB。 |
 | 冷启动后平板上看不到鼠标光标 | 更新 Windows 主机和安卓 APK 后重新连接。触控后移动鼠标即可恢复光标。 |
@@ -88,7 +90,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 .\scripts\build_release.ps1
 ```
 
-发布脚本运行测试，在 `dist\` 中生成 Android APK、Windows 便携 ZIP 和 `SHA256SUMS.txt`。分步开发时，三个构建命令可分别执行。
+发布脚本运行测试，在 `dist\` 中生成 Android APK、Windows 便携 ZIP 和 `SHA256SUMS.txt`。需要单独生成本机验收包时，可传入 `-OutputDirectory .\dist\validation`。分步开发时，三个构建命令可分别执行。
 
 ```powershell
 cargo build --release --locked --bin extscreen-host

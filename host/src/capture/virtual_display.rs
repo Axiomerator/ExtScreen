@@ -21,8 +21,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 
 const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
-const DEVICE_ID: &str = "Root\\MttVDD";
-const DEVICE_STRING: &str = "Virtual Display Driver";
+pub const DEVICE_ID: &str = "Root\\MttVDD";
 
 /// Refresh rates the tablet display is run at. The stream tops out at 144 fps, so a faster mode
 /// (the driver offers up to 244 Hz) only desynchronizes capture from encode and inflates the
@@ -79,131 +78,70 @@ pub fn detach_if(still_wanted: impl FnOnce() -> bool) {
     // Stop capture first so it does not fall back to another monitor while this one disappears.
     DETACHED.store(true, Ordering::Relaxed);
     let off = Mode { x: 0, y: 0, width: 0, height: 0, hz: 0 };
-    if apply_mode(&device, off) || detach_via_ccd() {
+    if apply_mode(&device, off) || change_mtt_path(&device, false) {
         info!("Tablet display detached from the desktop (no tablet connected)");
     } else {
         warn!("Could not detach the tablet display; the cursor and windows can still reach it");
     }
 }
 
-fn attach_via_ccd() -> bool {
+/// Changes only an indirect target on the exact GDI source belonging to MttVDD.
+fn change_mtt_path(device: &[u16], activate: bool) -> bool {
     use windows::Win32::Devices::Display::*;
     use windows::Win32::Foundation::WIN32_ERROR;
 
-    const DISPLAYCONFIG_PATH_ACTIVE: u32 = 0x00000001;
+    const DISPLAYCONFIG_PATH_ACTIVE: u32 = 0x0000_0001;
     const DISPLAYCONFIG_PATH_MODE_IDX_INVALID: u32 = 0xffff_ffff;
-
+    let device_name = wide(device);
     crate::shared::attach_to_default_desktop();
     unsafe {
-        let mut path_count = 0u32;
-        let mut mode_count = 0u32;
+        let mut path_count = 0_u32;
+        let mut mode_count = 0_u32;
         if GetDisplayConfigBufferSizes(QDC_ALL_PATHS, &mut path_count, &mut mode_count) != WIN32_ERROR(0) {
             return false;
         }
-
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
-
         if QueryDisplayConfig(
-            QDC_ALL_PATHS,
-            &mut path_count,
-            paths.as_mut_ptr(),
-            &mut mode_count,
-            modes.as_mut_ptr(),
-            None,
+            QDC_ALL_PATHS, &mut path_count, paths.as_mut_ptr(),
+            &mut mode_count, modes.as_mut_ptr(), None,
         ) != WIN32_ERROR(0) {
             return false;
         }
-
-        let mut activated = false;
-        for path in paths[..path_count as usize].iter_mut() {
-            if !path.targetInfo.targetAvailable.as_bool() {
+        let paths = &mut paths[..path_count as usize];
+        let mut changed = false;
+        for path in paths.iter_mut() {
+            if !matches!(path.targetInfo.outputTechnology,
+                DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_WIRED | DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_VIRTUAL)
+                || (activate && !path.targetInfo.targetAvailable.as_bool())
+                || (!activate && path.flags & DISPLAYCONFIG_PATH_ACTIVE == 0)
+            {
                 continue;
             }
-            let mut target_name = DISPLAYCONFIG_TARGET_DEVICE_NAME::default();
-            target_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-            target_name.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
-            target_name.header.adapterId = path.targetInfo.adapterId;
-            target_name.header.id = path.targetInfo.id;
-
-            if DisplayConfigGetDeviceInfo(&mut target_name.header) == 0 {
-                let friendly = String::from_utf16_lossy(&target_name.monitorFriendlyDeviceName);
-                let friendly_trim = friendly.trim_matches('\0');
-                if friendly_trim.contains("VDD") || friendly_trim.contains("MTT") || friendly_trim.contains("Virtual") {
-                    path.flags |= DISPLAYCONFIG_PATH_ACTIVE;
-                    path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-                    path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-                    activated = true;
-                    break;
-                }
+            if path.sourceInfo.adapterId != path.targetInfo.adapterId {
+                continue;
             }
-        }
-
-        if !activated {
-            return false;
-        }
-
-        SetDisplayConfig(
-            Some(&paths[..path_count as usize]),
-            Some(&modes[..mode_count as usize]),
-            SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
-        ) == 0
-    }
-}
-
-fn detach_via_ccd() -> bool {
-    use windows::Win32::Devices::Display::*;
-    use windows::Win32::Foundation::WIN32_ERROR;
-
-    const DISPLAYCONFIG_PATH_ACTIVE: u32 = 0x00000001;
-
-    crate::shared::attach_to_default_desktop();
-    unsafe {
-        let mut path_count = 0u32;
-        let mut mode_count = 0u32;
-        if GetDisplayConfigBufferSizes(QDC_ALL_PATHS, &mut path_count, &mut mode_count) != WIN32_ERROR(0) {
-            return false;
-        }
-
-        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
-        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
-
-        if QueryDisplayConfig(
-            QDC_ALL_PATHS,
-            &mut path_count,
-            paths.as_mut_ptr(),
-            &mut mode_count,
-            modes.as_mut_ptr(),
-            None,
-        ) != WIN32_ERROR(0) {
-            return false;
-        }
-
-        let mut deactivated = false;
-        for path in paths[..path_count as usize].iter_mut() {
-            let mut target_name = DISPLAYCONFIG_TARGET_DEVICE_NAME::default();
-            target_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-            target_name.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
-            target_name.header.adapterId = path.targetInfo.adapterId;
-            target_name.header.id = path.targetInfo.id;
-
-            if DisplayConfigGetDeviceInfo(&mut target_name.header) == 0 {
-                let friendly = String::from_utf16_lossy(&target_name.monitorFriendlyDeviceName);
-                let friendly_trim = friendly.trim_matches('\0');
-                if friendly_trim.contains("VDD") || friendly_trim.contains("MTT") || friendly_trim.contains("Virtual") {
-                    path.flags &= !DISPLAYCONFIG_PATH_ACTIVE;
-                    deactivated = true;
-                }
+            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME::default();
+            source.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            source.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
+            source.header.adapterId = path.sourceInfo.adapterId;
+            source.header.id = path.sourceInfo.id;
+            if DisplayConfigGetDeviceInfo(&mut source.header) != 0
+                || !wide(&source.viewGdiDeviceName).eq_ignore_ascii_case(&device_name)
+            {
+                continue;
             }
+            changed = true;
+            if activate {
+                path.flags |= DISPLAYCONFIG_PATH_ACTIVE;
+                path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+                path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+                break;
+            }
+            path.flags &= !DISPLAYCONFIG_PATH_ACTIVE;
         }
-
-        if !deactivated {
-            return false;
-        }
-
-        SetDisplayConfig(
-            Some(&paths[..path_count as usize]),
-            Some(&modes[..mode_count as usize]),
+        changed && SetDisplayConfig(
+            Some(paths), Some(&modes[..mode_count as usize]),
             SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
         ) == 0
     }
@@ -306,7 +244,7 @@ pub fn attach(panel_hz: u32, panel_w: u32, panel_h: u32) -> bool {
     let mode = sized_for_panel(&device, Mode { x, y, hz, ..base }, panel_w, panel_h);
 
     let mut applied = apply_mode_any_rate(&device, mode);
-    if !applied && attach_via_ccd() {
+    if !applied && change_mtt_path(&device, true) {
         info!("Tablet display path activated via Windows CCD topology API");
         if let Some((dev, _)) = find_device() {
             device = dev;
@@ -482,7 +420,11 @@ fn find_device() -> Option<(Vec<u16>, bool)> {
             break;
         }
         let id = wide(&dd.DeviceID);
-        if id.eq_ignore_ascii_case(DEVICE_ID) || wide(&dd.DeviceString) == DEVICE_STRING {
+        // Some Windows versions expose only the adapter description from the MttVDD INF here.
+        let description = wide(&dd.DeviceString);
+        if id.eq_ignore_ascii_case(DEVICE_ID)
+            || description.eq_ignore_ascii_case("Virtual Display Driver")
+        {
             let end = dd.DeviceName.iter().position(|&c| c == 0).unwrap_or(dd.DeviceName.len());
             let mut name = dd.DeviceName[..end].to_vec();
             name.push(0);
@@ -490,6 +432,11 @@ fn find_device() -> Option<(Vec<u16>, bool)> {
         }
     }
     None
+}
+
+/// The GDI source activated by this host's MttVDD target.
+pub fn attached_source_name() -> Option<String> {
+    find_device().and_then(|(name, attached)| attached.then(|| wide(&name)))
 }
 
 fn read_mode(device: &[u16], which: ENUM_DISPLAY_SETTINGS_MODE) -> Option<Mode> {

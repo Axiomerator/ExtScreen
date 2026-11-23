@@ -12,18 +12,43 @@ class HostBridge {
   const HostBridge();
 
   Future<void> ensureRunning() async {
-    final override = Platform.environment['EXTSCREEN_HOST_EXE'];
-    final installed = File(
-      '${File(Platform.resolvedExecutable).parent.path}\\extscreen-host.exe',
-    );
-    final host = override == null ? installed : File(override);
-    if (!await host.exists()) return;
+    final dashboard = File(Platform.resolvedExecutable);
+    final host = await _hostExecutable(dashboard.parent);
+    if (host == null) return;
     await Process.start(
       host.path,
       const ['--minimized'],
       workingDirectory: host.parent.path,
+      environment: {'EXTSCREEN_DASHBOARD_PATH': dashboard.path},
       mode: ProcessStartMode.detached,
     );
+  }
+
+  Future<File?> _hostExecutable(Directory dashboardDirectory) async {
+    final override = Platform.environment['EXTSCREEN_HOST_EXE'];
+    if (override != null) {
+      final file = File(override);
+      return await file.exists() ? file : null;
+    }
+    final path = dashboardDirectory.path;
+    final runner = RegExp(
+      r'\\ui\\build\\windows\\[^\\]+\\runner\\(Debug|Profile|Release)$',
+      caseSensitive: false,
+    ).firstMatch(path);
+    final repo = runner == null ? null : path.substring(0, runner.start);
+    final candidates = [
+      File('$path\\support\\extscreen-host.exe'),
+      File('$path\\extscreen-host.exe'),
+      if (repo != null) ...[
+        if (runner!.group(1)!.toLowerCase() == 'debug')
+          File('$repo\\target\\debug\\extscreen-host.exe'),
+        File('$repo\\target\\release\\extscreen-host.exe'),
+      ],
+    ];
+    for (final candidate in candidates) {
+      if (await candidate.exists()) return candidate;
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> request(String command, [Object? value]) =>

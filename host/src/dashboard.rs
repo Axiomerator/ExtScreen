@@ -130,6 +130,8 @@ enum Request {
     SetBitrate(u32),
     AdbReverse,
     DisplaySettings,
+    InstallDisplayDriver,
+    UninstallDisplayDriver,
     RequestKeyframe,
     NewPin,
     ForgetTablets,
@@ -285,6 +287,15 @@ async fn dispatch(request: Request, shared: &Arc<HostShared>) -> Value {
                 return failure("display_settings_failed");
             }
         }
+        Request::InstallDisplayDriver | Request::UninstallDisplayDriver => {
+            let operation = match request {
+                Request::InstallDisplayDriver => crate::driver_control::Operation::Install,
+                _ => crate::driver_control::Operation::Uninstall,
+            };
+            if let Err(error) = crate::driver_control::start(operation, shared) {
+                return failure(error);
+            }
+        }
         Request::RequestKeyframe => shared.request_idr.store(true, Ordering::SeqCst),
         Request::NewPin => shared.pairing.rotate_pin(),
         Request::ForgetTablets => {
@@ -314,6 +325,7 @@ fn failure(error: &'static str) -> Value {
 }
 
 fn status(shared: &HostShared) -> Value {
+    let connected = shared.client_connected.load(Ordering::Relaxed);
     let session = shared
         .session
         .lock()
@@ -327,7 +339,8 @@ fn status(shared: &HostShared) -> Value {
     let (width, height) = display.stream_size();
     let (usb, lan) = network_addresses();
     json!({
-        "connected": shared.client_connected.load(Ordering::Relaxed),
+        "connected": connected,
+        "display_driver": crate::driver_control::status(shared, connected),
         "device_name": session.as_ref().map(|session| session.device_name.as_str()),
         "link": session.as_ref().map(|session| match session.link {
             LinkKind::UsbCable => "usb",

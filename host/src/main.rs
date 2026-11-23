@@ -11,6 +11,8 @@ use tracing::{error, info, warn};
 
 mod capture;
 #[cfg(windows)]
+mod driver_control;
+#[cfg(windows)]
 mod driver_setup;
 mod input;
 mod log_writer;
@@ -68,7 +70,7 @@ async fn run() -> Result<()> {
     {
         let mut args = std::env::args().skip(1);
         match args.next().as_deref() {
-            Some(mode @ (driver_setup::INSTALL_ARG | driver_setup::UNINSTALL_ARG | driver_setup::QUERY_ARG)) => {
+            Some(mode @ (driver_setup::INSTALL_ARG | driver_setup::INSTALL_BUNDLED_ARG | driver_setup::UNINSTALL_ARG | driver_setup::QUERY_ARG)) => {
                 std::process::exit(driver_setup::run_cli(mode, args.next()));
             }
             Some(capture::virtual_display::GUARD_ARG) => {

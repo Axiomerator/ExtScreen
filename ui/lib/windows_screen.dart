@@ -43,6 +43,15 @@ class _WindowsScreenState extends State<WindowsScreen> {
 
   String t(String en, String zh) => widget.appearance.text(en, zh);
   bool get _connected => _status?['connected'] == true;
+  Map<String, dynamic>? get _displayDriver =>
+      _status?['display_driver'] as Map<String, dynamic>?;
+  bool get _mirroring => _displayDriver?['stream_mode'] == 'fallback';
+  bool get _canChangeDriver =>
+      _status != null &&
+      !_connected &&
+      !_working &&
+      _displayDriver?['operation'] == null &&
+      _displayDriver?['restart_required'] != true;
 
   @override
   void initState() {
@@ -214,6 +223,34 @@ class _WindowsScreenState extends State<WindowsScreen> {
       'Open Settings → System → Display to arrange your screens.',
       '请打开「设置 → 系统 → 显示」调整显示器。',
     ),
+    'driver_busy' => t(
+      'A display driver change is already in progress.',
+      '正在处理驱动变更。',
+    ),
+    'disconnect_before_driver_change' => t(
+      'Disconnect the Android device before changing the driver.',
+      '请先断开安卓设备，再更改驱动。',
+    ),
+    'driver_bundle_missing' => t(
+      'Driver files are missing. Re-extract the complete ExtScreen package.',
+      '驱动文件缺失。请重新解压完整的 ExtScreen 发布包。',
+    ),
+    'driver_status_unavailable' => t(
+      'Windows could not report driver status. Try again after restarting the host.',
+      'Windows 无法报告驱动状态。请重新启动主机后再试。',
+    ),
+    'driver_elevation_cancelled' => t(
+      'Administrator approval was cancelled.',
+      '已取消管理员授权。',
+    ),
+    'driver_install_failed' => t(
+      'Windows could not install the virtual display driver.',
+      'Windows 未能安装虚拟显示驱动。',
+    ),
+    'driver_uninstall_failed' => t(
+      'Windows could not uninstall the virtual display driver.',
+      'Windows 未能卸载虚拟显示驱动。',
+    ),
     'settings_write_failed' => t(
       'ExtScreen could not save the host settings.',
       'ExtScreen 无法保存主机设置。',
@@ -224,8 +261,28 @@ class _WindowsScreenState extends State<WindowsScreen> {
     ),
   };
 
-  Widget _section(String title, List<Widget> rows) =>
-      p.generateSection(title: title, items: rows);
+  Widget _section(String title, List<Widget> rows) {
+    if (rows.length < 2) {
+      return p.generateSection(title: title, items: rows);
+    }
+    return Column(
+      children: [
+        p.ListHeader(title: title),
+        Builder(
+          builder: (context) {
+            final color = p.SurfaceScope.of(context).next
+                .colorOf(p.Theme.of(context).colorScheme);
+            // Adjacent rounded rows can expose the page at fractional pixels.
+            // Paint a continuous base without changing Prism's row separators.
+            return DecoratedBox(
+              decoration: ShapeDecoration(color: color, shape: p.AppShape.xl),
+              child: p.generateGroup(rows),
+            );
+          },
+        ),
+      ],
+    );
+  }
 
   Widget _row(
     String label, {
@@ -358,13 +415,19 @@ class _WindowsScreenState extends State<WindowsScreen> {
       'wifi' => t('Local network', '局域网'),
       _ => '',
     };
+    final driverRestart = _displayDriver?['restart_required'] == true;
+    final needsDriver = switch (_displayDriver?['state']) {
+      'missing' || 'unavailable' => true,
+      _ => false,
+    };
     final title = _status == null
         ? t('Host unavailable', '主机未就绪')
         : _connected
-        ? t('Display connected', '副屏已连接')
+        ? _mirroring
+              ? t('Mirroring the primary display', '正在镜像主显示器')
+              : t('Display connected', '副屏已连接')
         : t('Ready to connect', '等待设备连接');
     final device = _status?['device_name'] as String?;
-    final terminal = _status == null || _connected;
 
     final summary = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,6 +462,16 @@ class _WindowsScreenState extends State<WindowsScreen> {
                     ? [device, if (link.isNotEmpty) link].nonNulls.join(' · ')
                     : _status == null
                     ? t('Start the host to accept connections.', '启动主机后即可连接。')
+                    : driverRestart
+                    ? t(
+                        'Restart Windows to complete the display driver change.',
+                        '请重启 Windows 以完成驱动变更。',
+                      )
+                    : needsDriver
+                    ? t(
+                        'Install the virtual display driver to extend the desktop.',
+                        '安装虚拟显示驱动后即可扩展桌面。',
+                      )
                     : t(
                         'Select this PC in ExtScreen on Android.',
                         '在安卓端 ExtScreen 中选择这台电脑。',
@@ -412,18 +485,26 @@ class _WindowsScreenState extends State<WindowsScreen> {
         ),
       ],
     );
-    final action = terminal
-        ? p.TonalButton(
-            label: _connected
-                ? t('Arrange displays', '排列显示器')
-                : t('Start host', '启动主机'),
-            onPressed: _working
-                ? null
-                : _connected
-                ? () => _command('display_settings')
-                : _start,
-          )
-        : null;
+    final action = switch ((
+      _status == null,
+      _connected,
+      needsDriver || driverRestart,
+      _mirroring,
+    )) {
+      (true, _, _, _) => p.TonalButton(
+        label: t('Start host', '启动主机'),
+        onPressed: _working ? null : _start,
+      ),
+      (false, _, true, _) || (false, true, _, true) => p.TonalButton(
+        label: t('Driver settings', '驱动设置'),
+        onPressed: () => _selectDestination(1),
+      ),
+      (false, true, false, false) => p.TonalButton(
+        label: t('Arrange displays', '排列显示器'),
+        onPressed: _working ? null : () => _command('display_settings'),
+      ),
+      _ => null,
+    };
     return p.Card(
       inert: true,
       radius: p.AppCorner.lg,
@@ -567,7 +648,9 @@ class _WindowsScreenState extends State<WindowsScreen> {
         if (_connected)
           _section(t('Current session', '当前会话'), [
             _row(
-              t('Virtual display', '虚拟显示器'),
+              _mirroring
+                  ? t('Primary display', '主显示器')
+                  : t('Virtual display', '虚拟显示器'),
               glyph: _WindowsGlyphs.display,
               value: '$width × $height · $hz Hz',
             ),
@@ -612,6 +695,101 @@ class _WindowsScreenState extends State<WindowsScreen> {
     setState(() => _destination = index);
   }
 
+  Future<void> _uninstallDisplayDriver() async {
+    if (!_canChangeDriver) return;
+    final accepted = await p.showFloatingDialog<bool>(
+      context: context,
+      child: Builder(
+        builder: (context) => p.AlertDialog(
+          title: t('Uninstall the display driver?', '卸载虚拟显示驱动？'),
+          child: Text(
+            t(
+              'ExtScreen will mirror the primary display until the driver is installed again. Windows will ask for administrator approval.',
+              '重新安装驱动前，ExtScreen 将镜像主显示器。Windows 会请求管理员授权。',
+            ),
+          ),
+          destructive: true,
+          actions: [
+            p.TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(t('Cancel', '取消')),
+            ),
+            p.TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(t('Uninstall', '卸载')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true && mounted && _canChangeDriver) {
+      await _command('uninstall_display_driver');
+    }
+  }
+
+  Widget _driverSettings() {
+    final driver = _displayDriver;
+    final state = driver?['state'];
+    final operation = driver?['operation'];
+    final restart = driver?['restart_required'] == true;
+    final bundle = driver?['bundle_available'] == true;
+    final error = driver?['error'] as String?;
+    final description = switch (operation) {
+      'installing' => t('Installing driver…', '正在安装驱动…'),
+      'uninstalling' => t('Uninstalling driver…', '正在卸载驱动…'),
+      _ when restart => t('Restart required', '需要重启'),
+      _ => switch (state) {
+        'ready' => t('Installed and ready', '已安装，可扩展'),
+        'missing' => t('Not installed', '未安装'),
+        'unavailable' => t('Driver unavailable', '驱动不可用'),
+        _ => t('Status unavailable', '无法获取状态'),
+      },
+    };
+    final help = switch (operation) {
+      'installing' || 'uninstalling' => t(
+        'Complete the administrator prompt if Windows asks.',
+        '如 Windows 提示，请完成管理员授权。',
+      ),
+      _ when restart => t(
+        'Restart Windows to complete the change.',
+        '请重启 Windows 以完成驱动变更。',
+      ),
+      _ when error != null => _errorText(error),
+      _ when _connected => t(
+        'Disconnect the Android device before changing the driver.',
+        '请先断开安卓设备，再更改驱动。',
+      ),
+      _ when !bundle && (state == 'missing' || state == 'unavailable') =>
+        _errorText('driver_bundle_missing'),
+      _ => null,
+    };
+    return _section(t('Virtual display driver', '虚拟显示驱动'), [
+      p.DecorationListItem(
+        leading: const GlyphIcon(_WindowsGlyphs.display, size: 20),
+        title: Semantics(liveRegion: true, child: Text(description)),
+        subtitle: help == null ? null : Text(help),
+        trailing: operation == null
+            ? null
+            : const p.ActivityIndicator(size: 18),
+      ),
+      if (state == 'missing' || state == 'unavailable')
+        _row(
+          state == 'missing'
+              ? t('Install driver', '安装驱动')
+              : t('Reinstall driver', '重新安装驱动'),
+          detail: t('Requires administrator approval', '需要管理员授权'),
+          onTap: _canChangeDriver && bundle
+              ? () => _command('install_display_driver')
+              : null,
+        ),
+      if (state == 'ready' || state == 'unavailable')
+        _row(
+          t('Uninstall driver', '卸载驱动'),
+          onTap: _canChangeDriver ? _uninstallDisplayDriver : null,
+        ),
+    ]);
+  }
+
   Widget _preferences() {
     final appearance = widget.appearance;
     return _columns(
@@ -639,6 +817,7 @@ class _WindowsScreenState extends State<WindowsScreen> {
               glyph: _WindowsGlyphs.appearance,
             ),
           ]),
+          _driverSettings(),
           _section(t('Host', '主机'), [
             _row(
               t('Set up ADB reverse', '设置 ADB 反向转发'),
