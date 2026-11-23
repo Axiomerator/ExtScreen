@@ -2,9 +2,9 @@
 //! encrypted full-feature sessions, fast multi-device handoff (`SessionTaken`), cached IDR
 //! codec/resolution isolation, large frame & batch stress, and malformed input resilience.
 //!
-//! Run: `cargo run -p xdisplay-host --bin test_scenarios_e2e`
+//! Run: `cargo run -p extscreen-host --bin test_scenarios_e2e`
 //!
-//! Never touches the user's monitors (`XDISPLAY_NO_DISPLAY_CHANGES=1` is set below) and never
+//! Never touches the user's monitors (`EXTSCREEN_NO_DISPLAY_CHANGES=1` is set below) and never
 //! injects real desktop pointer/keyboard events.
 #![allow(dead_code, unused_imports)]
 use anyhow::{bail, Context, Result};
@@ -16,13 +16,13 @@ use tokio::io::{split, ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
-use xdisplay_common::discovery::{HostAnnouncement, DISCOVERY_PORT, PROBE};
-use xdisplay_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::discovery::{HostAnnouncement, DISCOVERY_PORT, PROBE};
+use extscreen_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, ClientHello, ControlMessage, PacketHeader,
     StreamSettingsUpdate, VideoCodec, BITRATE_AUTO,
 };
-use xdisplay_common::{transcript, PakeClient, Role};
+use extscreen_common::{transcript, PakeClient, Role};
 
 #[path = "../capture/mod.rs"]
 mod capture;
@@ -83,7 +83,7 @@ async fn connect_encrypted(
     client_hello: ClientHello,
     mode: AuthMode,
     password: &[u8],
-) -> Result<(Link, Option<[u8; 32]>, xdisplay_common::protocol::ServerConfig)> {
+) -> Result<(Link, Option<[u8; 32]>, extscreen_common::protocol::ServerConfig)> {
     let stream = tokio::time::timeout(IO, TcpStream::connect(addr)).await.context("connect timeout")??;
     stream.set_nodelay(true)?;
     let (r, mut w) = split(stream);
@@ -145,8 +145,8 @@ fn check(name: &str, ok: bool) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    std::env::set_var("XDISPLAY_NO_DISPLAY_CHANGES", "1");
-    println!("== XDisplay Independent Scenario Suite ==");
+    std::env::set_var("EXTSCREEN_NO_DISPLAY_CHANGES", "1");
+    println!("== ExtScreen Independent Scenario Suite ==");
 
     let Some(lan_ip) = lan_addresses().into_iter().next() else {
         println!("SKIP: no active LAN IPv4 address available");

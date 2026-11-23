@@ -1,5 +1,5 @@
 // Release builds are a windowed app (dashboard + tray icon) with no console window; the log
-// goes to %LOCALAPPDATA%\XDisplay\logs. Debug builds keep the console for development.
+// goes to %LOCALAPPDATA%\ExtScreen\logs. Debug builds keep the console for development.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::Result;
@@ -36,10 +36,10 @@ unsafe fn acquire_single_instance_mutex() -> Option<windows::Win32::Foundation::
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
     use windows::core::w;
 
-    match CreateMutexW(None, true, w!("Global\\XDisplayHostSingleInstanceMutex")) {
+    match CreateMutexW(None, true, w!("Global\\ExtScreenHostSingleInstanceMutex")) {
         Ok(handle) => {
             if GetLastError() == ERROR_ALREADY_EXISTS {
-                if let Ok(hwnd) = FindWindowW(w!("XDisplayDashboardClass"), None) {
+                if let Ok(hwnd) = FindWindowW(w!("ExtScreenDashboardClass"), None) {
                     if !hwnd.0.is_null() {
                         let _ = ShowWindow(hwnd, SW_RESTORE);
                         let _ = SetForegroundWindow(hwnd);
@@ -57,7 +57,7 @@ unsafe fn acquire_single_instance_mutex() -> Option<windows::Win32::Foundation::
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        log_writer::report_fatal(&format!("XDisplay could not start: {e:#}"));
+        log_writer::report_fatal(&format!("ExtScreen could not start: {e:#}"));
         // Let the log thread write the error out.
         std::thread::sleep(Duration::from_millis(200));
         std::process::exit(1);
@@ -116,7 +116,7 @@ async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "xdisplay_host=debug,info".into()),
+                .unwrap_or_else(|_| "extscreen_host=debug,info".into()),
         )
         .with_writer(log_writer::NonBlockingStdout::new())
         .with_ansi(false)
@@ -134,7 +134,7 @@ async fn run() -> Result<()> {
     }
 
     info!("=======================================================");
-    info!("   XDisplay Host Service (Rust Ultra-Low Latency)");
+    info!("   ExtScreen Host Service (Rust Ultra-Low Latency)");
     info!("   Screen Extension & Stylus Digitizer Server");
     info!("=======================================================");
 
@@ -202,10 +202,10 @@ async fn run() -> Result<()> {
             info!("Transport server stopped");
         }
         _ = tokio::signal::ctrl_c() => {
-            info!("Shutdown signal received. Exiting XDisplay host.");
+            info!("Shutdown signal received. Exiting ExtScreen host.");
         }
         _ = console_closing() => {
-            info!("Console closing. Exiting XDisplay host.");
+            info!("Console closing. Exiting ExtScreen host.");
         }
     }
 

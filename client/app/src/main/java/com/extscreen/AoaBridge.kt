@@ -1,4 +1,4 @@
-package com.xdisplay
+package com.extscreen
 
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
@@ -29,7 +29,7 @@ class AoaBridge(
 ) : AutoCloseable {
 
     companion object {
-        private const val TAG = "XDisplayAoaBridge"
+        private const val TAG = "ExtScreenAoaBridge"
         // Accessory reads shorter than the gadget's 16 KB request size lose data on some kernels.
         private const val BUFFER_SIZE = 32768
     }
@@ -57,8 +57,8 @@ class AoaBridge(
         usbIn = FileInputStream(pfd.fileDescriptor)
         usbOut = FileOutputStream(pfd.fileDescriptor)
 
-        daemon("xdisplay-aoa-accept") { acceptLoop() }
-        daemon("xdisplay-aoa-rx") { usbToClient() }
+        daemon("extscreen-aoa-accept") { acceptLoop() }
+        daemon("extscreen-aoa-rx") { usbToClient() }
         Log.i(TAG, "AOA bridge listening on 127.0.0.1:$port")
     }
 
@@ -80,7 +80,7 @@ class AoaBridge(
             client?.let { closeQuietly(it) }
             client = socket
             Log.i(TAG, "Native client connected to the AOA bridge")
-            daemon("xdisplay-aoa-tx") { clientToUsb(socket) }
+            daemon("extscreen-aoa-tx") { clientToUsb(socket) }
         }
     }
 

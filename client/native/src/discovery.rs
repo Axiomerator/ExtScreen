@@ -1,4 +1,4 @@
-//! LAN and USB Tethering scanner: finds XDisplay hosts announcing themselves over UDP so the
+//! LAN and USB Tethering scanner: finds ExtScreen hosts announcing themselves over UDP so the
 //! user never has to type an IP address. Discovery is advisory; the authenticated handshake
 //! decides trust.
 //!
@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use xdisplay_common::discovery::{HostAnnouncement, DISCOVERY_PORT, PROBE};
-use xdisplay_common::{hex, HostId};
+use extscreen_common::discovery::{HostAnnouncement, DISCOVERY_PORT, PROBE};
+use extscreen_common::{hex, HostId};
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(1);
 /// A host that has not announced itself for this long has left the network.
@@ -146,7 +146,7 @@ impl Discovery {
             self.interfaces.clone(),
             self.probe_now.clone(),
         );
-        let spawned = thread::Builder::new().name("xdisplay-discovery".into()).spawn(move || {
+        let spawned = thread::Builder::new().name("extscreen-discovery".into()).spawn(move || {
             let alive = || running.load(Ordering::Relaxed) && generation.load(Ordering::Relaxed) == gen;
             // Listening on the well-known port catches beacons; if another app owns it, an
             // ephemeral port still receives the unicast replies to our own probes.
@@ -164,7 +164,7 @@ impl Discovery {
             }
             let _ = socket.set_broadcast(true);
             let _ = socket.set_read_timeout(Some(POLL));
-            log::info!("Scanning for XDisplay hosts (USB Tethering & Wi-Fi)");
+            log::info!("Scanning for ExtScreen hosts (USB Tethering & Wi-Fi)");
 
             let global_broadcast = SocketAddr::from(([255, 255, 255, 255], DISCOVERY_PORT));
             let mut next_probe = Instant::now();
@@ -258,7 +258,7 @@ fn record(hosts: &Mutex<HashMap<HostId, Seen>>, ann: HostAnnouncement, ip: IpAdd
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xdisplay_common::discovery::AnnouncementKind;
+    use extscreen_common::discovery::AnnouncementKind;
 
     fn ann(id: u8, name: &str) -> HostAnnouncement {
         HostAnnouncement { kind: AnnouncementKind::Beacon, host_id: [id; 16], tcp_port: 59100, name: name.into() }

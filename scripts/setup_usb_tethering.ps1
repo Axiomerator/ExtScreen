@@ -3,16 +3,16 @@
     One-time Windows setup so Android USB Tethering works automatically for every phone or tablet.
 .DESCRIPTION
     Configures two things once on this PC (zero per-device drivers, zero USB debugging):
-      1. Windows Firewall rules allowing XDisplay over USB Tethering (wired local-subnet links,
+      1. Windows Firewall rules allowing ExtScreen over USB Tethering (wired local-subnet links,
          even when Windows classifies a new Android device as a "Public" network) and over
          Private/Domain Wi-Fi. Public Wi-Fi remains blocked.
-      2. A lightweight event-triggered scheduled task ("XDisplay\USB Tethering Route Priority")
+      2. A lightweight event-triggered scheduled task ("ExtScreen\USB Tethering Route Priority")
          that raises the route metric of Android RNDIS / USB NCM adapters to 500 when they
          connect, so turning on USB Tethering never steals your PC's Wi-Fi/Ethernet internet.
 
     Safe to re-run. Run with -Remove to undo both changes cleanly.
 .PARAMETER HostExe
-    Optional path to xdisplay-host.exe. Auto-detected if omitted.
+    Optional path to extscreen-host.exe. Auto-detected if omitted.
 .PARAMETER TaskOnly
     Only register (or remove) the USB Tethering route-priority task without changing firewall rules.
 .PARAMETER NoRouteTask
@@ -32,16 +32,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$TaskName = "XDisplay\USB Tethering Route Priority"
+$TaskName = "ExtScreen\USB Tethering Route Priority"
 
 $RuleNames = @(
-    "XDisplay Host (USB Tethering TCP)",
-    "XDisplay Host (USB Tethering UDP)",
-    "XDisplay Host (Wi-Fi TCP)",
-    "XDisplay Host (Wi-Fi UDP)",
-    "XDisplay Host (Wi-Fi stream, TCP 59100)",
-    "XDisplay Host (Wi-Fi discovery, UDP 59101)",
-    "XDisplay Host Stream"
+    "ExtScreen Host (USB Tethering TCP)",
+    "ExtScreen Host (USB Tethering UDP)",
+    "ExtScreen Host (Wi-Fi TCP)",
+    "ExtScreen Host (Wi-Fi UDP)",
+    "ExtScreen Host (Wi-Fi stream, TCP 59100)",
+    "ExtScreen Host (Wi-Fi discovery, UDP 59101)",
+    "ExtScreen Host Stream"
 )
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -61,9 +61,9 @@ if (-not $isAdmin) {
 if (-not $HostExe) {
     $root = (Resolve-Path "$PSScriptRoot\..").Path
     $HostExe = @(
-        (Join-Path $root "xdisplay-host.exe"),
-        (Join-Path $root "target\release\xdisplay-host.exe"),
-        (Join-Path $root "target\debug\xdisplay-host.exe")
+        (Join-Path $root "extscreen-host.exe"),
+        (Join-Path $root "target\release\extscreen-host.exe"),
+        (Join-Path $root "target\debug\extscreen-host.exe")
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 
@@ -75,7 +75,7 @@ if ($Remove) {
     }
     & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
     if (-not $Quiet) {
-        Write-Host "XDisplay USB Tethering setup removed." -ForegroundColor Green
+        Write-Host "ExtScreen USB Tethering setup removed." -ForegroundColor Green
         Start-Sleep -Seconds 2
     }
     exit 0
@@ -88,29 +88,29 @@ if (-not $TaskOnly) {
     }
 
     if ($HostExe -and (Test-Path $HostExe)) {
-        New-NetFirewallRule -DisplayName "XDisplay Host (USB Tethering TCP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (USB Tethering TCP)" -Direction Inbound -Action Allow `
             -Program $HostExe -Protocol TCP -Profile Public, Private, Domain -InterfaceType Wired `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (USB Tethering UDP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (USB Tethering UDP)" -Direction Inbound -Action Allow `
             -Program $HostExe -Protocol UDP -Profile Public, Private, Domain -InterfaceType Wired `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (Wi-Fi TCP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (Wi-Fi TCP)" -Direction Inbound -Action Allow `
             -Program $HostExe -Protocol TCP -Profile Private, Domain `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (Wi-Fi UDP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (Wi-Fi UDP)" -Direction Inbound -Action Allow `
             -Program $HostExe -Protocol UDP -Profile Private, Domain `
             -RemoteAddress LocalSubnet | Out-Null
     } else {
-        New-NetFirewallRule -DisplayName "XDisplay Host (USB Tethering TCP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (USB Tethering TCP)" -Direction Inbound -Action Allow `
             -Protocol TCP -LocalPort 59100 -Profile Public, Private, Domain -InterfaceType Wired `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (USB Tethering UDP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (USB Tethering UDP)" -Direction Inbound -Action Allow `
             -Protocol UDP -LocalPort 59101 -Profile Public, Private, Domain -InterfaceType Wired `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (Wi-Fi TCP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (Wi-Fi TCP)" -Direction Inbound -Action Allow `
             -Protocol TCP -LocalPort 59100 -Profile Private, Domain `
             -RemoteAddress LocalSubnet | Out-Null
-        New-NetFirewallRule -DisplayName "XDisplay Host (Wi-Fi UDP)" -Direction Inbound -Action Allow `
+        New-NetFirewallRule -DisplayName "ExtScreen Host (Wi-Fi UDP)" -Direction Inbound -Action Allow `
             -Protocol UDP -LocalPort 59101 -Profile Private, Domain `
             -RemoteAddress LocalSubnet | Out-Null
     }
@@ -166,7 +166,7 @@ if (-not $NoRouteTask) {
   </Actions>
 </Task>
 "@
-        $tmpXml = Join-Path $env:TEMP ("xdisplay-tether-task-" + [guid]::NewGuid().ToString("N") + ".xml")
+        $tmpXml = Join-Path $env:TEMP ("extscreen-tether-task-" + [guid]::NewGuid().ToString("N") + ".xml")
         try {
             [System.IO.File]::WriteAllText($tmpXml, $xml, [System.Text.Encoding]::Unicode)
             & schtasks.exe /Create /TN $TaskName /XML $tmpXml /F | Out-Null
@@ -180,13 +180,13 @@ if (-not $NoRouteTask) {
             Write-Host "[OK] USB Tethering route protection installed (your PC keeps its own Wi-Fi/Ethernet internet)." -ForegroundColor Green
         }
     } elseif (-not $Quiet) {
-        Write-Host "[!] xdisplay-host.exe not found yet; skipped route priority task." -ForegroundColor Yellow
+        Write-Host "[!] extscreen-host.exe not found yet; skipped route priority task." -ForegroundColor Yellow
     }
 }
 
 if (-not $Quiet) {
     Write-Host ""
-    Write-Host "All set! Plug in ANY Android phone or tablet, turn on USB Tethering, and open XDisplay." -ForegroundColor Cyan
+    Write-Host "All set! Plug in ANY Android phone or tablet, turn on USB Tethering, and open ExtScreen." -ForegroundColor Cyan
     Write-Host "First time on a device: enter the 6-digit PIN from the PC dashboard. After that it connects automatically." -ForegroundColor Gray
     Start-Sleep -Seconds 3
 }

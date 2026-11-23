@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use xdisplay_common::protocol::{flags, PacketHeader, HEADER_SIZE, PROTOCOL_VERSION};
-use xdisplay_common::{Opener, Sealer, TAG_LEN};
+use extscreen_common::protocol::{flags, PacketHeader, HEADER_SIZE, PROTOCOL_VERSION};
+use extscreen_common::{Opener, Sealer, TAG_LEN};
 
 /// Small packets (control, cursor, input) are coalesced on the stack so they always go out in
 /// a single syscall and single TCP segment under TCP_NODELAY.

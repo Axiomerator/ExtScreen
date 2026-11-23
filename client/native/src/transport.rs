@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 
 use crate::decoder::{raise_thread_priority, supports_hardware_hevc, MediaCodecDecoder, STREAM_THREAD_NICE};
 use crate::handshake::{client_handshake, HandshakeError};
-use xdisplay_common::input::{actions, KeyEvent, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::input::{actions, KeyEvent, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, ClientHello, ControlMessage, CursorEvent, PacketHeader, StreamSettingsUpdate, VideoCodec,
     HEADER_SIZE, PROTOCOL_VERSION,
 };
-use xdisplay_common::{hex, ClientId, DeviceSecret, HostId, Opener, Sealer, TAG_LEN};
+use extscreen_common::{hex, ClientId, DeviceSecret, HostId, Opener, Sealer, TAG_LEN};
 
 pub const STATUS_DISCONNECTED: i32 = 0;
 pub const STATUS_CONNECTING: i32 = 1;
@@ -478,13 +478,13 @@ impl TransportClient {
         };
 
         thread::Builder::new()
-            .name("xdisplay-transport".into())
+            .name("extscreen-transport".into())
             .spawn(move || {
                 log::info!("Transport client thread started");
                 link.worker_loop();
                 log::info!("Transport client thread stopped");
             })
-            .expect("Failed to spawn xdisplay-transport thread");
+            .expect("Failed to spawn extscreen-transport thread");
     }
 
     /// Drops the current link and parks the worker thread until the next `start`. The thread is
@@ -824,7 +824,7 @@ impl Link {
         let rx_window = self.surface_window.clone();
 
         thread::Builder::new()
-            .name("xdisplay-video-rx".into())
+            .name("extscreen-video-rx".into())
             .spawn(move || {
                 raise_thread_priority(STREAM_THREAD_NICE);
                 let mut header_buf = [0u8; HEADER_SIZE];

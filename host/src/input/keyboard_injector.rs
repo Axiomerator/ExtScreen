@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
-use xdisplay_common::input::{key_actions, key_modifiers, vk_codes, KeyEvent};
+use extscreen_common::input::{key_actions, key_modifiers, vk_codes, KeyEvent};
 
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{

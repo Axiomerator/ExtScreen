@@ -223,10 +223,10 @@ pub fn display_hz_for(panel_hz: u32) -> u32 {
 /// (`panel_w`x`panel_h`) when the driver offers it, so the stream maps 1:1 onto the panel's
 /// pixels instead of being upscaled. Returns false when there is no virtual display driver or
 /// attaching failed.
-/// Test harnesses (`test_security_e2e`) set `XDISPLAY_NO_DISPLAY_CHANGES=1` so driving the real
+/// Test harnesses (`test_security_e2e`) set `EXTSCREEN_NO_DISPLAY_CHANGES=1` so driving the real
 /// transport server never attaches, re-modes or detaches the user's virtual monitor.
 fn display_changes_disabled() -> bool {
-    std::env::var_os("XDISPLAY_NO_DISPLAY_CHANGES").is_some_and(|v| v == "1")
+    std::env::var_os("EXTSCREEN_NO_DISPLAY_CHANGES").is_some_and(|v| v == "1")
 }
 
 fn reload_driver_pipe() -> bool {
@@ -384,11 +384,11 @@ pub const STOP_WATCHDOG_ARG: &str = "--stop-watchdog";
 /// Argument that stops the watchdog and removes the per-user autostart a portable run created.
 pub const REMOVE_WATCHDOG_ARG: &str = "--remove-watchdog";
 
-const HOST_MUTEX: &str = "Global\\XDisplayHostSingleInstanceMutex";
-const WATCHDOG_MUTEX: &str = "Global\\XDisplayWatchdogMutex";
-const WATCHDOG_STOP_EVENT: &str = "Global\\XDisplayWatchdogStop";
+const HOST_MUTEX: &str = "Global\\ExtScreenHostSingleInstanceMutex";
+const WATCHDOG_MUTEX: &str = "Global\\ExtScreenWatchdogMutex";
+const WATCHDOG_STOP_EVENT: &str = "Global\\ExtScreenWatchdogStop";
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const RUN_VALUE: &str = "XDisplayWatchdog";
+const RUN_VALUE: &str = "ExtScreenWatchdog";
 
 fn wstr(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -631,7 +631,7 @@ fn is_plausible(m: &Mode) -> bool {
 }
 
 fn mode_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("XDisplay").join("tablet_display.conf"))
+    std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("ExtScreen").join("tablet_display.conf"))
 }
 
 fn save_mode(m: Mode) {

@@ -1,11 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title XDisplay - Ultra-Low Latency Second Screen ^& Tablet
+title ExtScreen - Ultra-Low Latency Second Screen ^& Tablet
 cls
 
 echo =====================================================================
-echo           XDisplay: One-Click Launcher ^& Runtime Manager
+echo           ExtScreen: One-Click Launcher ^& Runtime Manager
 echo =====================================================================
 echo.
 
@@ -69,35 +69,35 @@ echo [OK] Connected to tablet: %DEVICE_ID%
 echo Setting up USB port forwarding: adb reverse tcp:59100 tcp:59100...
 adb reverse tcp:59100 tcp:59100
 
-echo [3/4] Launching XDisplay on tablet...
-adb shell am start -n com.xdisplay/.MainActivity
+echo [3/4] Launching ExtScreen on tablet...
+adb shell am start -n com.extscreen/.MainActivity
 goto :LAUNCH_HOST
 
 :NO_DEVICE
 echo [INFO] No tablet with USB debugging found. Using plug-and-play USB instead:
-echo        plug in the tablet and tap OK on "Open XDisplay for this USB accessory?".
-echo        (Wi-Fi works too: open XDisplay on the tablet and pick this PC.)
+echo        plug in the tablet and tap OK on "Open ExtScreen for this USB accessory?".
+echo        (Wi-Fi works too: open ExtScreen on the tablet and pick this PC.)
 
 :LAUNCH_HOST
 echo.
 
 :: Step 4: Launch Host Executable
-echo [4/4] Starting XDisplay Windows Host...
-set "HOST_EXE=%REPO_ROOT%\target\release\xdisplay-host.exe"
+echo [4/4] Starting ExtScreen Windows Host...
+set "HOST_EXE=%REPO_ROOT%\target\release\extscreen-host.exe"
 
-tasklist /fi "imagename eq xdisplay-host.exe" 2>nul | findstr /i "xdisplay-host.exe" >nul 2>&1
+tasklist /fi "imagename eq extscreen-host.exe" 2>nul | findstr /i "extscreen-host.exe" >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    echo [INFO] Restarting existing XDisplay Host instance to refresh USB ^& display state...
-    taskkill /f /im xdisplay-host.exe >nul 2>&1
+    echo [INFO] Restarting existing ExtScreen Host instance to refresh USB ^& display state...
+    taskkill /f /im extscreen-host.exe >nul 2>&1
     timeout /t 1 /nobreak >nul
 )
 
 if not exist "%HOST_EXE%" (
     echo Release binary not found. Compiling release build now...
     cd /d "%REPO_ROOT%"
-    cargo build --release -p xdisplay-host
+    cargo build --release -p extscreen-host
     if !ERRORLEVEL! neq 0 (
-        echo [ERROR] Failed to compile xdisplay-host!
+        echo [ERROR] Failed to compile extscreen-host!
         pause
         exit /b 1
     )
@@ -105,7 +105,7 @@ if not exist "%HOST_EXE%" (
 
 echo.
 echo =====================================================================
-echo   XDisplay is running^^!
+echo   ExtScreen is running^^!
 echo   - GUI Dashboard: check system tray icon or taskbar window
 echo   - To stop: press Ctrl+C in this console or Exit from the tray menu
 echo =====================================================================

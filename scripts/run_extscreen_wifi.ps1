@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    XDisplay - One-Click Runner for Wi-Fi mode (no USB cable needed).
+    ExtScreen - One-Click Runner for Wi-Fi mode (no USB cable needed).
 .DESCRIPTION
-    The Wi-Fi counterpart of run_xdisplay.ps1: enables the virtual display, makes sure the
+    The Wi-Fi counterpart of run_extscreen.ps1: enables the virtual display, makes sure the
     firewall allows tablets on your network, shows which addresses the tablet can reach, opens
-    XDisplay on the tablet if one happens to be plugged in for ADB, and runs the host.
+    ExtScreen on the tablet if one happens to be plugged in for ADB, and runs the host.
 
-    On the tablet: open XDisplay, tap your PC under "PCs on this Wi-Fi", enter the PIN from the
+    On the tablet: open ExtScreen, tap your PC under "PCs on this Wi-Fi", enter the PIN from the
     PC dashboard the first time. Afterwards it reconnects without a PIN.
 .PARAMETER RebuildHost
     Stop a running host and rebuild the release binary first.
@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = "Continue"
 
 Write-Host "=====================================================================" -ForegroundColor Cyan
-Write-Host "          XDisplay Wi-Fi Runner                                      " -ForegroundColor Yellow
+Write-Host "          ExtScreen Wi-Fi Runner                                      " -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -30,7 +30,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     if (Test-Path "$env:USERPROFILE\.cargo\bin") { $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path }
 }
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
-$hostExe = Join-Path $repoRoot "target\release\xdisplay-host.exe"
+$hostExe = Join-Path $repoRoot "target\release\extscreen-host.exe"
 
 # 1. Virtual secondary display
 Write-Host "[1/5] Ensuring secondary virtual display is active..." -ForegroundColor Green
@@ -42,7 +42,7 @@ if (Test-Path $driverScript) {
 
 # 2. Firewall: without these rules Windows silently blocks the tablet
 Write-Host "[2/5] Checking Windows Firewall rules for Wi-Fi..." -ForegroundColor Green
-$rules = @(Get-NetFirewallRule -DisplayName "XDisplay Host (Wi-Fi*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
+$rules = @(Get-NetFirewallRule -DisplayName "ExtScreen Host (Wi-Fi*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
 if ($rules.Count -ge 2) {
     Write-Host "       -> TCP 59100 + UDP 59101 allowed on the local network." -ForegroundColor Gray
 } else {
@@ -57,7 +57,7 @@ Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host ("       {0,-16} {1}" -f $_.IPAddress, $_.InterfaceAlias) -ForegroundColor Gray }
 $public = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object NetworkCategory -eq "Public")
 if ($public.Count -gt 0) {
-    Write-Host "       [WARN] Windows treats these as 'Public' (XDisplay is blocked there):" -ForegroundColor Yellow
+    Write-Host "       [WARN] Windows treats these as 'Public' (ExtScreen is blocked there):" -ForegroundColor Yellow
     $public | ForEach-Object { Write-Host "              - $($_.Name) ($($_.InterfaceAlias))" -ForegroundColor Yellow }
     Write-Host "              Set your Wi-Fi to Private: Settings > Network & internet > Wi-Fi > <network>." -ForegroundColor Yellow
 }
@@ -68,23 +68,23 @@ $adbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 if ((-not $NoTabletLaunch) -and (Test-Path $adbPath)) {
     & $adbPath start-server | Out-Null
     if (& $adbPath devices | Select-String "\sdevice$") {
-        & $adbPath shell am start -n com.xdisplay/.ConnectActivity | Out-Null
-        Write-Host "       -> Opened XDisplay's connect screen on the tablet." -ForegroundColor Gray
+        & $adbPath shell am start -n com.extscreen/.ConnectActivity | Out-Null
+        Write-Host "       -> Opened ExtScreen's connect screen on the tablet." -ForegroundColor Gray
     } else {
-        Write-Host "       -> No USB tablet; open XDisplay on the tablet yourself." -ForegroundColor Gray
+        Write-Host "       -> No USB tablet; open ExtScreen on the tablet yourself." -ForegroundColor Gray
     }
 } else {
-    Write-Host "       -> Open XDisplay on the tablet yourself." -ForegroundColor Gray
+    Write-Host "       -> Open ExtScreen on the tablet yourself." -ForegroundColor Gray
 }
 
 # 5. Host
 if ($RebuildHost) {
-    Get-Process xdisplay-host -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process extscreen-host -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 if ($RebuildHost -or (-not (Test-Path $hostExe))) {
-    Write-Host "[5/5] Building xdisplay-host (release mode)..." -ForegroundColor Yellow
+    Write-Host "[5/5] Building extscreen-host (release mode)..." -ForegroundColor Yellow
     Push-Location $repoRoot
-    cargo build --release -p xdisplay-host
+    cargo build --release -p extscreen-host
     Pop-Location
 }
 
@@ -95,13 +95,13 @@ Write-Host "  First time only: type the 6-digit PIN from the dashboard's" -Foreg
 Write-Host "  'Wi-Fi & Pairing' card (system tray icon if the window is hidden)." -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 
-$existing = Get-Process xdisplay-host -ErrorAction SilentlyContinue
+$existing = Get-Process extscreen-host -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Host "[5/5] XDisplay Host is already running (PID: $($existing.Id)); showing its dashboard." -ForegroundColor Green
+    Write-Host "[5/5] ExtScreen Host is already running (PID: $($existing.Id)); showing its dashboard." -ForegroundColor Green
     & (Join-Path $repoRoot "scripts\launch_host.ps1") | Out-Null   # second launch only focuses the window
     return
 }
 
-Write-Host "[5/5] Starting XDisplay Host (Ctrl+C or tray > Exit to stop)..." -ForegroundColor Cyan
+Write-Host "[5/5] Starting ExtScreen Host (Ctrl+C or tray > Exit to stop)..." -ForegroundColor Cyan
 Push-Location $repoRoot
 try { & $hostExe } finally { Pop-Location }

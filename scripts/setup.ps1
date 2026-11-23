@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    XDisplay - one-time guided setup. Run it once; afterwards use run_xdisplay_wifi.bat / run_xdisplay.bat.
+    ExtScreen - one-time guided setup. Run it once; afterwards use run_extscreen_wifi.bat / run_extscreen.bat.
 .DESCRIPTION
-    Checks everything XDisplay needs and fixes what it can (with winget):
+    Checks everything ExtScreen needs and fixes what it can (with winget):
       1. virtual display driver   2. Windows Firewall (Wi-Fi)   3. Windows host program
       4. Android tools (adb)      5. tablet app (installed over USB if a tablet is plugged in)
     Safe to re-run: finished steps are skipped.
@@ -27,7 +27,7 @@ function WingetInstall($id) {
 }
 
 Write-Host "=====================================================================" -ForegroundColor Cyan
-Write-Host "   XDisplay first-time setup (about 2 minutes, one time only)" -ForegroundColor Yellow
+Write-Host "   ExtScreen first-time setup (about 2 minutes, one time only)" -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 
 # 1. Virtual display driver
@@ -60,30 +60,30 @@ if (Test-Path $drv) {
 # UsbDk is no longer used or installed: it is a filter on every USB stack and blue-screened
 # Windows (0x10D) when a device was unplugged. Earlier versions installed it; flag it for removal.
 if (Get-Service UsbDk -ErrorAction SilentlyContinue) {
-    Warn "The UsbDk USB driver from an earlier XDisplay is installed. It can crash Windows when a USB device is unplugged."
-    $todo.Add("Uninstall 'UsbDk Runtime Libraries' in Settings > Apps, then restart Windows. XDisplay no longer needs it.")
+    Warn "An existing installation of the UsbDk USB driver was detected. It can crash Windows when a USB device is unplugged."
+    $todo.Add("Uninstall 'UsbDk Runtime Libraries' in Settings > Apps, then restart Windows. ExtScreen no longer needs it.")
 } else {
     Ok "USB works over USB debugging (adb); no extra driver needed."
 }
 
 # 2. Firewall + USB Tethering
 Step 2 "Windows Firewall (lets any Android device connect over USB Tethering & Wi-Fi)"
-$rules = @(Get-NetFirewallRule -DisplayName "XDisplay Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
+$rules = @(Get-NetFirewallRule -DisplayName "ExtScreen Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
 if ($rules.Count -ge 4) { Ok "Already allowed (USB Tethering + Private Wi-Fi)." }
 else {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "scripts\setup_usb_tethering.ps1") -Quiet
-    $rules = @(Get-NetFirewallRule -DisplayName "XDisplay Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
-    if ($rules.Count -ge 2) { Ok "Rules added." } else { Warn "Firewall rules missing (USB Tethering / Wi-Fi will not connect)."; $todo.Add("Run XDisplay-USB-Tethering-Setup.cmd as administrator.") }
+    $rules = @(Get-NetFirewallRule -DisplayName "ExtScreen Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
+    if ($rules.Count -ge 2) { Ok "Rules added." } else { Warn "Firewall rules missing (USB Tethering / Wi-Fi will not connect)."; $todo.Add("Run ExtScreen-USB-Tethering-Setup.cmd as administrator.") }
 }
 $public = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object NetworkCategory -eq "Public")
 if ($public.Count -gt 0) {
-    Warn "Windows treats '$($public[0].Name)' as a Public network, which blocks XDisplay."
+    Warn "Windows treats '$($public[0].Name)' as a Public network, which blocks ExtScreen."
     $todo.Add("Set your Wi-Fi to Private: Settings > Network & internet > Wi-Fi > your network > Network profile type > Private.")
 }
 
 # 3. Host program
-Step 3 "XDisplay Windows program"
-$hostExe = @((Join-Path $root "xdisplay-host.exe"), (Join-Path $root "target\release\xdisplay-host.exe")) | Where-Object { Test-Path $_ } | Select-Object -First 1
+Step 3 "ExtScreen Windows program"
+$hostExe = @((Join-Path $root "extscreen-host.exe"), (Join-Path $root "target\release\extscreen-host.exe")) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($hostExe) { Ok "Found $hostExe" }
 else {
     if (-not (Have cargo) -and (Test-Path "$env:USERPROFILE\.cargo\bin")) { $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path }
@@ -94,8 +94,8 @@ else {
     }
     if (Have cargo) {
         Write-Host "       Building (first build takes a few minutes)..." -ForegroundColor Gray
-        Push-Location $root; cargo build --release -p xdisplay-host; Pop-Location
-        if (Test-Path (Join-Path $root "target\release\xdisplay-host.exe")) { Ok "Built." }
+        Push-Location $root; cargo build --release -p extscreen-host; Pop-Location
+        if (Test-Path (Join-Path $root "target\release\extscreen-host.exe")) { Ok "Built." }
         else { Warn "Build failed."; $todo.Add("Install 'Visual Studio Build Tools' with the C++ workload (winget install Microsoft.VisualStudio.2022.BuildTools), then run setup.bat again.") }
     } else { Warn "Rust not available."; $todo.Add("Install Rust from https://rustup.rs, then run setup.bat again.") }
 }
@@ -114,8 +114,8 @@ if ($adb) { Ok "adb found." } else { Warn "adb not found (only needed for USB mo
 # 5. Tablet app
 Step 5 "Tablet app"
 $apk = @(
-    (Get-ChildItem (Join-Path $root "dist") -Filter "XDisplay-*.apk" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName,
-    (Join-Path $root "android\XDisplay.apk"),
+    (Get-ChildItem (Join-Path $root "dist") -Filter "ExtScreen-*.apk" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName,
+    (Join-Path $root "android\ExtScreen.apk"),
     (Join-Path $root "client\app\build\outputs\apk\release\app-release.apk"),
     (Join-Path $root "client\app\build\outputs\apk\debug\app-debug.apk")
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
@@ -127,7 +127,7 @@ else {
     if (& $adb devices | Select-String "\sdevice$") {
         Write-Host "       Tablet detected - installing app..." -ForegroundColor Gray
         & $adb install -r -t $apk | Out-Null
-        if ($LASTEXITCODE -eq 0) { $installed = $true; Ok "XDisplay installed on the tablet." }
+        if ($LASTEXITCODE -eq 0) { $installed = $true; Ok "ExtScreen installed on the tablet." }
     }
 }
 if (-not $installed) {
@@ -143,8 +143,8 @@ if (-not $installed) {
 Write-Host ""
 Write-Host "=====================================================================" -ForegroundColor Cyan
 if ($todo.Count -eq 0) {
-    Write-Host "  All set!  Double-click  run_xdisplay_wifi.bat  (or run_xdisplay.bat for USB)." -ForegroundColor Green
-    Write-Host "  On the tablet open XDisplay, tap your PC, type the 6-digit PIN once." -ForegroundColor Green
+    Write-Host "  All set!  Double-click  run_extscreen_wifi.bat  (or run_extscreen.bat for USB)." -ForegroundColor Green
+    Write-Host "  On the tablet open ExtScreen, tap your PC, type the 6-digit PIN once." -ForegroundColor Green
 } else {
     Write-Host "  Almost there. Still to do:" -ForegroundColor Yellow
     $i = 1; foreach ($t in $todo) { Write-Host "   $i. $t" -ForegroundColor Yellow; $i++ }

@@ -10,9 +10,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::info;
-use xdisplay_common::protocol::{msg_types, AuthMode, AuthPolicy, AuthRejectReason, ClientHello, ControlMessage, HelloAck};
-use xdisplay_common::protocol::{flags, PacketHeader};
-use xdisplay_common::{host_respond, transcript, DeviceSecret, Opener, Role, Sealer, CONFIRM_LEN};
+use extscreen_common::protocol::{msg_types, AuthMode, AuthPolicy, AuthRejectReason, ClientHello, ControlMessage, HelloAck};
+use extscreen_common::protocol::{flags, PacketHeader};
+use extscreen_common::{host_respond, transcript, DeviceSecret, Opener, Role, Sealer, CONFIRM_LEN};
 
 use super::framing::{write_packet, PacketReader};
 use super::pairing::{sanitize_name, PairingStore, UsbApproval};
@@ -159,8 +159,8 @@ where
 mod tests {
     use super::*;
     use tokio::io::{duplex, split};
-    use xdisplay_common::protocol::VideoCodec;
-    use xdisplay_common::{PakeClient, CLIENT_ID_LEN};
+    use extscreen_common::protocol::VideoCodec;
+    use extscreen_common::{PakeClient, CLIENT_ID_LEN};
 
     const NETWORK_PEER: bool = false;
 

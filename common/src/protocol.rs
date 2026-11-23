@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::{CLIENT_ID_LEN, CONFIRM_LEN, DEVICE_SECRET_LEN, HOST_ID_LEN};
 
-/// 2-byte magic marker for stream synchronization: 'X', 'D' (0x58, 0x44)
-pub const PROTOCOL_MAGIC: [u8; 2] = [0x58, 0x44];
+/// 2-byte magic marker for stream synchronization: 'E', 'S' (0x45, 0x53)
+pub const PROTOCOL_MAGIC: [u8; 2] = [0x45, 0x53];
 /// Version 2: authenticated, encrypted wireless sessions (see `crypto`).
 pub const PROTOCOL_VERSION: u16 = 2;
 

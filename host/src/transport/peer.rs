@@ -208,8 +208,8 @@ mod tests {
     fn the_host_name_is_no_longer_a_pass() {
         // A copied or renamed binary in another process must pair like anything else; only this
         // very process (the AOA bridge) is trusted, by pid.
-        assert!(!is_trusted_owner(&owner(7, r"C:\temp\xdisplay-host.exe", true), ME));
-        assert!(!is_trusted_owner(&owner(7, "xdisplay_host.exe", true), ME));
+        assert!(!is_trusted_owner(&owner(7, r"C:\temp\extscreen-host.exe", true), ME));
+        assert!(!is_trusted_owner(&owner(7, "extscreen_host.exe", true), ME));
         assert!(is_trusted_owner(&owner(ME, "", true), ME));
     }
 

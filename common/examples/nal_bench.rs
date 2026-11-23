@@ -1,8 +1,8 @@
 //! Cost of the per-frame NAL inspection (run on the PC for every encoded frame and on the
-//! tablet for every received one). `cargo run --release -p xdisplay-common --example nal_bench`
+//! tablet for every received one). `cargo run --release -p extscreen-common --example nal_bench`
 use std::time::Instant;
-use xdisplay_common::nal::inspect_for_codec;
-use xdisplay_common::protocol::VideoCodec;
+use extscreen_common::nal::inspect_for_codec;
+use extscreen_common::protocol::VideoCodec;
 
 /// AUD + slice header + `body` bytes of slice data without start codes (emulation prevention
 /// guarantees none inside a NAL).

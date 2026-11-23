@@ -1,9 +1,9 @@
 //! Security attack suite against the real `TransportServer`, from this PC's LAN address (a
 //! non-loopback peer, like a laptop on the same Wi-Fi). Every check is an attack that must fail.
 //!
-//! Run: `cargo run -p xdisplay-host --bin test_security_e2e`
+//! Run: `cargo run -p extscreen-host --bin test_security_e2e`
 //!
-//! The virtual monitor is never touched (`XDISPLAY_NO_DISPLAY_CHANGES=1` is set below) and no
+//! The virtual monitor is never touched (`EXTSCREEN_NO_DISPLAY_CHANGES=1` is set below) and no
 //! pointer or key event that could reach the desktop is ever sent after authentication.
 #![allow(dead_code, unused_imports)]
 use anyhow::{bail, Context, Result};
@@ -14,12 +14,12 @@ use tokio::io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
-use xdisplay_common::input::{actions, tool_types, KeyEvent, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::input::{actions, tool_types, KeyEvent, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, AuthRejectReason, ClientHello, ControlMessage, PacketHeader, VideoCodec,
     HEADER_SIZE, PROTOCOL_VERSION,
 };
-use xdisplay_common::{transcript, PakeClient, Role, Sealer};
+use extscreen_common::{transcript, PakeClient, Role, Sealer};
 
 #[path = "../capture/mod.rs"]
 mod capture;
@@ -201,11 +201,11 @@ async fn paired_session(addr: SocketAddr, store: &PairingStore, client_id: [u8; 
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    std::env::set_var("XDISPLAY_NO_DISPLAY_CHANGES", "1");
+    std::env::set_var("EXTSCREEN_NO_DISPLAY_CHANGES", "1");
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "error".into()))
         .init();
-    println!("== XDisplay security attack suite ==");
+    println!("== ExtScreen security attack suite ==");
     let Some(lan_ip) = transport::lan_addresses().into_iter().next() else {
         println!("  SKIP  no LAN address on this PC; a network attacker cannot be simulated");
         return Ok(());
@@ -279,7 +279,7 @@ async fn main() -> Result<()> {
                     seed ^= seed >> 7;
                     seed ^= seed << 17;
                     // Every few rounds keep a valid magic+version so parsing goes deeper.
-                    if round % 3 == 0 && i < 4 { [0x58, 0x44, 2, 0][i] } else { seed as u8 }
+                    if round % 3 == 0 && i < 4 { [0x45, 0x53, 2, 0][i] } else { seed as u8 }
                 })
                 .collect();
             let _ = stream.write_all(&junk).await;
@@ -489,20 +489,20 @@ async fn main() -> Result<()> {
 
     // ---------------------------------------------------------------- discovery
     println!("-- discovery --");
-    match UdpSocket::bind(("0.0.0.0", xdisplay_common::discovery::DISCOVERY_PORT)).await {
+    match UdpSocket::bind(("0.0.0.0", extscreen_common::discovery::DISCOVERY_PORT)).await {
         Ok(probe_port) => {
             drop(probe_port);
             transport::spawn_discovery_server(port, shared.clone());
             tokio::time::sleep(Duration::from_millis(300)).await;
             let sock = UdpSocket::bind((lan_ip, 0)).await?;
-            let target = SocketAddr::new(IpAddr::V4(lan_ip), xdisplay_common::discovery::DISCOVERY_PORT);
+            let target = SocketAddr::new(IpAddr::V4(lan_ip), extscreen_common::discovery::DISCOVERY_PORT);
             for _ in 0..200 {
-                sock.send_to(xdisplay_common::discovery::PROBE, target).await?;
+                sock.send_to(extscreen_common::discovery::PROBE, target).await?;
             }
             let mut replies = 0;
             let mut buf = [0u8; 512];
             while let Ok(Ok((n, _))) = tokio::time::timeout(Duration::from_millis(500), sock.recv_from(&mut buf)).await {
-                if xdisplay_common::discovery::HostAnnouncement::parse(&buf[..n]).is_some() {
+                if extscreen_common::discovery::HostAnnouncement::parse(&buf[..n]).is_some() {
                     replies += 1;
                 }
             }

@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Result};
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
-use xdisplay_common::protocol::VideoCodec;
+use extscreen_common::protocol::VideoCodec;
 #[allow(unused_imports)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -324,7 +324,7 @@ impl MediaCodecDecoder {
         // time it should appear (see `Pacer`); the compositor shows the newest due frame at each
         // refresh and discards any older one, so a backlog never adds latency.
         let render_thread = thread::Builder::new()
-            .name("xdisplay-render".into())
+            .name("extscreen-render".into())
             .spawn(move || {
                 raise_thread_priority(STREAM_THREAD_NICE);
                 let codec = codec_addr as *mut AMediaCodec;
@@ -457,7 +457,7 @@ impl MediaCodecDecoder {
             return Ok(true);
         }
 
-        let info = xdisplay_common::nal::inspect_for_codec(data, self.codec_type);
+        let info = extscreen_common::nal::inspect_for_codec(data, self.codec_type);
 
         if self.awaiting_keyframe && info.first_slice.is_some() && !info.has_idr {
             return Ok(false);

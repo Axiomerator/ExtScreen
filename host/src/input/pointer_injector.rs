@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::time::Instant;
 use tracing::{info, warn};
-use xdisplay_common::input::{actions, buttons, tool_types, PointerEvent};
+use extscreen_common::input::{actions, buttons, tool_types, PointerEvent};
 
 #[cfg(windows)]
 use windows::Win32::{

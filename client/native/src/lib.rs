@@ -8,7 +8,7 @@ use jni::sys::{jboolean, jfloat, jint, jlong};
 use jni::JNIEnv;
 use std::sync::OnceLock;
 use tracing::info;
-use xdisplay_common::input::{actions, tool_types, PointerEvent};
+use extscreen_common::input::{actions, tool_types, PointerEvent};
 
 static CLIENT: OnceLock<transport::TransportClient> = OnceLock::new();
 static DISCOVERY: OnceLock<discovery::Discovery> = OnceLock::new();
@@ -22,11 +22,11 @@ fn jstring_or_empty(env: &mut JNIEnv, s: &JString) -> String {
 }
 
 /// Parses `host_id_hex:secret_hex` lines (newline or comma separated); malformed entries are skipped.
-fn parse_credentials(text: &str) -> Vec<(xdisplay_common::HostId, xdisplay_common::DeviceSecret)> {
+fn parse_credentials(text: &str) -> Vec<(extscreen_common::HostId, extscreen_common::DeviceSecret)> {
     text.split(['\n', ','])
         .filter_map(|entry| {
             let (id, secret) = entry.trim().split_once(':')?;
-            Some((xdisplay_common::hex::decode_array(id)?, xdisplay_common::hex::decode_array(secret)?))
+            Some((extscreen_common::hex::decode_array(id)?, extscreen_common::hex::decode_array(secret)?))
         })
         .collect()
 }
@@ -38,7 +38,7 @@ fn get_client() -> &'static transport::TransportClient {
 /// Native JNI interface between the Android Kotlin Activity / SurfaceView
 /// and the high-performance Rust streaming engine.
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_initNativeLogging(
+pub extern "system" fn Java_com_extscreen_NativeEngine_initNativeLogging(
     _env: JNIEnv,
     _class: JClass,
 ) {
@@ -47,14 +47,14 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_initNativeLogging(
         android_logger::init_once(
             android_logger::Config::default()
                 .with_max_level(log::LevelFilter::Debug)
-                .with_tag("XDisplayNative"),
+                .with_tag("ExtScreenNative"),
         );
     }
-    info!("XDisplay Android Native Engine initialized");
+    info!("ExtScreen Android Native Engine initialized");
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_setSurface(
+pub extern "system" fn Java_com_extscreen_NativeEngine_setSurface(
     #[allow(unused_variables)]
     env: JNIEnv,
     _class: JClass,
@@ -83,7 +83,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_setSurface(
 
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_startClient(
+pub extern "system" fn Java_com_extscreen_NativeEngine_startClient(
     mut env: JNIEnv,
     _class: JClass,
     host: JString,
@@ -111,8 +111,8 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_startClient(
     let pin = jstring_or_empty(&mut env, &pin);
     let credentials = parse_credentials(&jstring_or_empty(&mut env, &credentials));
     // A malformed id would make every pairing unrecognizable later; fall back to a throwaway one.
-    let client_id = xdisplay_common::hex::decode_array(&client_id_text)
-        .or_else(|| xdisplay_common::random_bytes().ok())
+    let client_id = extscreen_common::hex::decode_array(&client_id_text)
+        .or_else(|| extscreen_common::random_bytes().ok())
         .unwrap_or([0; 16]);
 
     let port = (port as u32).clamp(1, 65535) as u16;
@@ -146,7 +146,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_startClient(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_stopClient(
+pub extern "system" fn Java_com_extscreen_NativeEngine_stopClient(
     _env: JNIEnv,
     _class: JClass,
 ) {
@@ -154,7 +154,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_stopClient(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getConnectionStatus(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getConnectionStatus(
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
@@ -163,7 +163,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getConnectionStatus(
 
 /// Why the link is in `STATUS_NEEDS_PIN` / `STATUS_AUTH_FAILED` (empty otherwise).
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getLastError<'a>(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getLastError<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
 ) -> JString<'a> {
@@ -172,7 +172,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getLastError<'a>(
 
 /// Name of the PC the link is connected (or was last connected) to.
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getHostName<'a>(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getHostName<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
 ) -> JString<'a> {
@@ -182,7 +182,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getHostName<'a>(
 /// Returns `host_id_hex:secret_hex` once after a pairing completes, else an empty string.
 /// The caller must persist it: it is what lets the tablet reconnect without a PIN.
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_takeNewCredential<'a>(
+pub extern "system" fn Java_com_extscreen_NativeEngine_takeNewCredential<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
 ) -> JString<'a> {
@@ -190,12 +190,12 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_takeNewCredential<'a>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_startDiscovery(_env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_com_extscreen_NativeEngine_startDiscovery(_env: JNIEnv, _class: JClass) {
     get_discovery().start();
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_setDiscoveryInterfaces(
+pub extern "system" fn Java_com_extscreen_NativeEngine_setDiscoveryInterfaces(
     mut env: JNIEnv,
     _class: JClass,
     spec: JString,
@@ -205,13 +205,13 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_setDiscoveryInterfaces(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_stopDiscovery(_env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_com_extscreen_NativeEngine_stopDiscovery(_env: JNIEnv, _class: JClass) {
     get_discovery().stop();
 }
 
 /// Hosts currently announcing themselves, one `ip|port|name|host_id_hex|usb|wifi` per line.
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getDiscoveredHosts<'a>(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getDiscoveredHosts<'a>(
     env: JNIEnv<'a>,
     _class: JClass<'a>,
 ) -> JString<'a> {
@@ -219,7 +219,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getDiscoveredHosts<'a>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getSentPacketsCount(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getSentPacketsCount(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -227,7 +227,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getSentPacketsCount(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getRoundTripLatencyUs(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getRoundTripLatencyUs(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -235,7 +235,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_getRoundTripLatencyUs(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_sendPointerEvent(
+pub extern "system" fn Java_com_extscreen_NativeEngine_sendPointerEvent(
     _env: JNIEnv,
     _class: JClass,
     pointer_id: jint,
@@ -292,14 +292,14 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_sendPointerEvent(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_sendKeyEvent(
+pub extern "system" fn Java_com_extscreen_NativeEngine_sendKeyEvent(
     _env: JNIEnv,
     _class: JClass,
     vk_code: jint,
     action: jint,
     modifiers: jint,
 ) {
-    let event = xdisplay_common::input::KeyEvent::new(
+    let event = extscreen_common::input::KeyEvent::new(
         vk_code as u16,
         action as u8,
         modifiers as u8,
@@ -308,7 +308,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_sendKeyEvent(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_updateStreamSettings(
+pub extern "system" fn Java_com_extscreen_NativeEngine_updateStreamSettings(
     _env: JNIEnv,
     _class: JClass,
     target_fps: jint,
@@ -316,7 +316,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_updateStreamSettings(
 ) {
     // Kotlin passes -1 (NativeEngine.BITRATE_AUTO) for automatic bitrate and 0 for "unchanged".
     let bitrate = match bitrate_kbps {
-        b if b < 0 => Some(xdisplay_common::protocol::BITRATE_AUTO),
+        b if b < 0 => Some(extscreen_common::protocol::BITRATE_AUTO),
         0 => None,
         b => Some(b as u32),
     };
@@ -324,7 +324,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_updateStreamSettings(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_sendScrollEvent(
+pub extern "system" fn Java_com_extscreen_NativeEngine_sendScrollEvent(
     _env: JNIEnv,
     _class: JClass,
     delta_y: jfloat,
@@ -333,7 +333,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_sendScrollEvent(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_sendScrollEventAt(
+pub extern "system" fn Java_com_extscreen_NativeEngine_sendScrollEventAt(
     _env: JNIEnv,
     _class: JClass,
     norm_x: jfloat,
@@ -344,7 +344,7 @@ pub extern "system" fn Java_com_xdisplay_NativeEngine_sendScrollEventAt(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_xdisplay_NativeEngine_getCursorState(
+pub extern "system" fn Java_com_extscreen_NativeEngine_getCursorState(
     env: JNIEnv,
     _class: JClass,
     out_state: JFloatArray,

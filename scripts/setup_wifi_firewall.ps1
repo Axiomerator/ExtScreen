@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Allows tablets on your Wi-Fi to reach XDisplay (Windows Firewall rules).
+    Allows tablets on your Wi-Fi to reach ExtScreen (Windows Firewall rules).
 .DESCRIPTION
     Windows blocks inbound connections by default, so a tablet can neither find the PC
     (UDP 59101) nor stream from it (TCP 59100) until these rules exist. The rules are limited
-    to the local subnet and to Private/Domain networks, so XDisplay is never reachable from the
+    to the local subnet and to Private/Domain networks, so ExtScreen is never reachable from the
     internet or from networks you have marked "Public".
 
     Run it once. It asks for administrator rights by itself. USB needs none of this.
@@ -14,13 +14,13 @@
 [CmdletBinding()]
 param([switch]$Remove)
 
-$tcpRule = "XDisplay Host (Wi-Fi stream, TCP 59100)"
-$udpRule = "XDisplay Host (Wi-Fi discovery, UDP 59101)"
-$tetherTcpRule = "XDisplay Host (USB Tethering TCP)"
-$tetherUdpRule = "XDisplay Host (USB Tethering UDP)"
-$wifiTcpRule = "XDisplay Host (Wi-Fi TCP)"
-$wifiUdpRule = "XDisplay Host (Wi-Fi UDP)"
-$legacyRule = "XDisplay Host Stream"
+$tcpRule = "ExtScreen Host (Wi-Fi stream, TCP 59100)"
+$udpRule = "ExtScreen Host (Wi-Fi discovery, UDP 59101)"
+$tetherTcpRule = "ExtScreen Host (USB Tethering TCP)"
+$tetherUdpRule = "ExtScreen Host (USB Tethering UDP)"
+$wifiTcpRule = "ExtScreen Host (Wi-Fi TCP)"
+$wifiUdpRule = "ExtScreen Host (Wi-Fi UDP)"
+$legacyRule = "ExtScreen Host Stream"
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -37,7 +37,7 @@ foreach ($name in @($tcpRule, $udpRule, $tetherTcpRule, $tetherUdpRule, $wifiTcp
 }
 
 if ($Remove) {
-    Write-Host "XDisplay firewall rules removed." -ForegroundColor Green
+    Write-Host "ExtScreen firewall rules removed." -ForegroundColor Green
     Start-Sleep -Seconds 2
     exit
 }

@@ -7,7 +7,7 @@
 //! Lines are now handed to a writer thread and dropped when it falls behind.
 //!
 //! The installed host has no console, so the same thread also appends every line to
-//! `%LOCALAPPDATA%\XDisplay\logs\xdisplay-host.log` (the previous run is kept as `.old.log`).
+//! `%LOCALAPPDATA%\ExtScreen\logs\extscreen-host.log` (the previous run is kept as `.old.log`).
 
 use std::fs::File;
 use std::io::{self, Write};
@@ -36,7 +36,7 @@ impl NonBlockingStdout {
         let tx = TX
             .get_or_init(|| {
                 let (tx, rx) = sync_channel::<Vec<u8>>(QUEUE_LINES);
-                let _ = thread::Builder::new().name("xdisplay-log".into()).spawn(move || {
+                let _ = thread::Builder::new().name("extscreen-log".into()).spawn(move || {
                     let mut out = io::stdout();
                     let mut file = LogFile::open();
                     for line in rx {
@@ -73,7 +73,7 @@ impl NonBlockingStdout {
 
 /// Folder that holds the host's log files.
 pub fn log_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("XDisplay").join("logs"))
+    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ExtScreen").join("logs"))
 }
 
 /// Append-only log file with a size cap.
@@ -87,9 +87,9 @@ impl LogFile {
     fn open() -> Option<Self> {
         let dir = log_dir()?;
         std::fs::create_dir_all(&dir).ok()?;
-        let path = dir.join("xdisplay-host.log");
+        let path = dir.join("extscreen-host.log");
         // Keep the previous run for bug reports. A second host instance exits before it logs.
-        let _ = std::fs::rename(&path, dir.join("xdisplay-host.old.log"));
+        let _ = std::fs::rename(&path, dir.join("extscreen-host.old.log"));
         let file = File::create(&path).ok()?;
         Some(Self { path, file, written: 0 })
     }
@@ -117,7 +117,7 @@ pub fn report_fatal(message: &str) {
         use windows::core::PCWSTR;
         use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
         let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-        let title: Vec<u16> = "XDisplay".encode_utf16().chain(Some(0)).collect();
+        let title: Vec<u16> = "ExtScreen".encode_utf16().chain(Some(0)).collect();
         MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR);
     }
 }

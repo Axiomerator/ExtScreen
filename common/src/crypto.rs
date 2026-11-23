@@ -77,7 +77,7 @@ pub fn random_pin() -> Result<String, CryptoError> {
     }
 }
 
-const ID_CLIENT: &[u8] = b"xdisplay-client";
+const ID_CLIENT: &[u8] = b"extscreen-client";
 
 fn identities(host_id: &HostId) -> (Identity, Identity) {
     (Identity::new(ID_CLIENT), Identity::new(host_id))
@@ -86,7 +86,7 @@ fn identities(host_id: &HostId) -> (Identity, Identity) {
 /// Everything both sides have exchanged in the clear; confirmations and session keys bind to it.
 pub fn transcript(client_id: &ClientId, host_id: &HostId, client_msg: &[u8], host_msg: &[u8]) -> Vec<u8> {
     let mut t = Vec::with_capacity(64 + client_msg.len() + host_msg.len());
-    t.extend_from_slice(b"xdisplay-handshake-v2");
+    t.extend_from_slice(b"extscreen-handshake-v2");
     t.extend_from_slice(client_id);
     t.extend_from_slice(host_id);
     t.extend_from_slice(&(client_msg.len() as u16).to_le_bytes());
@@ -143,8 +143,8 @@ impl PakeKey {
     fn mac(&self, role: Role, transcript: &[u8]) -> HmacSha256 {
         let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(match role {
-            Role::Client => b"xdisplay-confirm-client",
-            Role::Host => b"xdisplay-confirm-host\0\0",
+            Role::Client => b"extscreen-confirm-client",
+            Role::Host => b"extscreen-confirm-host\0\0",
         });
         mac.update(transcript);
         mac
@@ -166,8 +166,8 @@ impl PakeKey {
         let hk = Hkdf::<Sha256>::new(Some(&salt), &self.0);
         let mut c2h = [0u8; 32];
         let mut h2c = [0u8; 32];
-        hk.expand(b"xdisplay client->host", &mut c2h).expect("32 bytes is a valid HKDF length");
-        hk.expand(b"xdisplay host->client", &mut h2c).expect("32 bytes is a valid HKDF length");
+        hk.expand(b"extscreen client->host", &mut c2h).expect("32 bytes is a valid HKDF length");
+        hk.expand(b"extscreen host->client", &mut h2c).expect("32 bytes is a valid HKDF length");
         let channel = match role {
             Role::Client => (Sealer::new(&c2h), Opener::new(&h2c)),
             Role::Host => (Sealer::new(&h2c), Opener::new(&c2h)),

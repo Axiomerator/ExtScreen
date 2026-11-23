@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds a complete XDisplay release into dist\: the Android APK, the Windows installer and
+    Builds a complete ExtScreen release into dist\: the Android APK, the Windows installer and
     SHA256SUMS.txt.
 .DESCRIPTION
     Runs the tests, builds the Android native library for every supported CPU (arm64-v8a,
@@ -8,7 +8,7 @@
 
     Needs: Rust (with the Android targets and cargo-ndk), the Android SDK + NDK, JDK 17 and
     Inno Setup 6. The APK is signed when a keystore is configured (see client/app/build.gradle.kts:
-    XDISPLAY_KEYSTORE_PROPERTIES or client/keystore.properties); otherwise it is left unsigned.
+    EXTSCREEN_KEYSTORE_PROPERTIES or client/keystore.properties); otherwise it is left unsigned.
 .PARAMETER SkipTests
     Skip the unit tests.
 #>
@@ -29,7 +29,7 @@ function Run($exe, [string[]]$arguments, $dir = $root) {
 }
 
 $version = (Select-String -Path (Join-Path $root "host\Cargo.toml") -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
-Write-Host "XDisplay $version" -ForegroundColor Yellow
+Write-Host "ExtScreen $version" -ForegroundColor Yellow
 
 # Toolchain discovery
 $sdk = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA "Android\Sdk")) |
@@ -61,10 +61,10 @@ $apkDir = Join-Path $root "client\app\build\outputs\apk\release"
 $apk = @("app-release.apk", "app-release-unsigned.apk") | ForEach-Object { Join-Path $apkDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $apk) { throw "No APK produced in $apkDir" }
 if ($apk -like "*unsigned*") { Write-Warning "The APK is unsigned (no keystore configured); Android will not install it as is." }
-Copy-Item $apk (Join-Path $dist "XDisplay-$version.apk") -Force
+Copy-Item $apk (Join-Path $dist "ExtScreen-$version.apk") -Force
 
 Step "Windows host"
-$defaultHostExe = Join-Path $root "target\release\xdisplay-host.exe"
+$defaultHostExe = Join-Path $root "target\release\extscreen-host.exe"
 $hostLocked = $false
 if (Test-Path $defaultHostExe) {
     try {
@@ -75,20 +75,20 @@ if (Test-Path $defaultHostExe) {
     }
 }
 if ($hostLocked) {
-    Write-Warning "target\release\xdisplay-host.exe is currently running; building into target\release-stage so your live display is not interrupted."
+    Write-Warning "target\release\extscreen-host.exe is currently running; building into target\release-stage so your live display is not interrupted."
     $stageDir = Join-Path $root "target\release-stage"
-    Run cargo @("build", "--release", "-p", "xdisplay-host", "--target-dir", $stageDir)
-    $hostExeForInstaller = Join-Path $stageDir "release\xdisplay-host.exe"
+    Run cargo @("build", "--release", "-p", "extscreen-host", "--target-dir", $stageDir)
+    $hostExeForInstaller = Join-Path $stageDir "release\extscreen-host.exe"
 } else {
-    Run cargo @("build", "--release", "-p", "xdisplay-host")
+    Run cargo @("build", "--release", "-p", "extscreen-host")
     $hostExeForInstaller = $defaultHostExe
 }
 
 Step "Windows installer"
-Run $iscc @("/Q", "/DMyAppVersion=$version", "/DHostExe=$hostExeForInstaller", (Join-Path $root "installer\xdisplay_setup.iss"))
+Run $iscc @("/Q", "/DMyAppVersion=$version", "/DHostExe=$hostExeForInstaller", (Join-Path $root "installer\extscreen_setup.iss"))
 
 Step "Checksums"
-$files = @("XDisplay-$version.apk", "XDisplay-Setup-$version.exe")
+$files = @("ExtScreen-$version.apk", "ExtScreen-Setup-$version.exe")
 $lines = foreach ($f in $files) {
     $hash = (Get-FileHash (Join-Path $dist $f) -Algorithm SHA256).Hash.ToLower()
     "$hash  $f"

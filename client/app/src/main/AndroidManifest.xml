@@ -18,7 +18,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
-        android:label="XDisplay"
+        android:label="ExtScreen"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
@@ -35,7 +35,7 @@
             </intent-filter>
         </activity>
 
-        <!-- The display itself. `adb shell am start -n com.xdisplay/.MainActivity` still connects over USB. -->
+        <!-- The display itself. `adb shell am start -n com.extscreen/.MainActivity` still connects over USB. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1,11 +1,11 @@
-package com.xdisplay
+package com.extscreen
 
 /**
  * JNI bindings to the high-performance Rust streaming engine.
  */
 object NativeEngine {
     init {
-        System.loadLibrary("xdisplay_client_native")
+        System.loadLibrary("extscreen_client_native")
     }
 
     const val STATUS_DISCONNECTED = 0

@@ -1,4 +1,4 @@
-package com.xdisplay
+package com.extscreen
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -65,7 +65,7 @@ class ConnectActivity : Activity() {
 
         if (accessory != null) {
             // Android grants the permission itself only when it launched us from its "Open
-            // XDisplay?" prompt; opened any other way, ask once per accessory.
+            // ExtScreen?" prompt; opened any other way, ask once per accessory.
             if (!usbManager.hasPermission(accessory)) {
                 if (permissionAskedFor != accessory) {
                     permissionAskedFor = accessory
@@ -139,7 +139,7 @@ class ConnectActivity : Activity() {
         if (checkAndLaunchAoa()) return
         // Some devices drop broadcast datagrams unless a multicast lock is held.
         val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        multicastLock = wifi?.createMulticastLock("xdisplay-discovery")?.apply {
+        multicastLock = wifi?.createMulticastLock("extscreen-discovery")?.apply {
             setReferenceCounted(false)
             acquire()
         }
@@ -248,7 +248,7 @@ class ConnectActivity : Activity() {
         }
         pinDialog = AlertDialog.Builder(this)
             .setTitle("Pair with ${target.name}")
-            .setMessage("Open XDisplay on the PC and enter the 6-digit PIN shown on its dashboard. You only need to do this once.")
+            .setMessage("Open ExtScreen on the PC and enter the 6-digit PIN shown on its dashboard. You only need to do this once.")
             .setView(holder)
             .setPositiveButton("Pair") { _, _ -> launch(target, hostId, input.text.toString()) }
             .setNegativeButton("Cancel", null)
@@ -350,7 +350,7 @@ class ConnectActivity : Activity() {
             usbTetherHolder.addView(
                 card(
                     "USB Tethering active — finding your PC…",
-                    "Make sure XDisplay is running on your Windows PC. Tap here to open Tethering settings.",
+                    "Make sure ExtScreen is running on your Windows PC. Tap here to open Tethering settings.",
                     accent = true
                 ) {
                     NetworkUtils.openUsbTetheringSettings(this)
@@ -373,7 +373,7 @@ class ConnectActivity : Activity() {
         if (wifiHosts.isEmpty()) {
             hostList.addView(
                 TextView(this).apply {
-                    text = "Searching for PCs on this Wi-Fi…\nMake sure XDisplay is running on the PC and both are on the same network."
+                    text = "Searching for PCs on this Wi-Fi…\nMake sure ExtScreen is running on the PC and both are on the same network."
                     setTextColor(Color.rgb(110, 135, 165))
                     textSize = 14f
                     setPadding(dp(4), dp(8), dp(4), dp(8))
@@ -396,7 +396,7 @@ class ConnectActivity : Activity() {
             setPadding(dp(24), dp(28), dp(24), dp(28))
         }
 
-        root.addView(label("XDisplay", 30f, Color.WHITE, bold = true))
+        root.addView(label("ExtScreen", 30f, Color.WHITE, bold = true))
         root.addView(label("Use this phone or tablet as a low-latency second screen and pen display", 15f, Color.rgb(140, 165, 195)))
 
         messageView = label("", 14f, Color.rgb(255, 120, 120)).apply {
@@ -497,7 +497,7 @@ class ConnectActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val ACTION_USB_PERMISSION = "com.xdisplay.USB_ACCESSORY_PERMISSION"
+        private const val ACTION_USB_PERMISSION = "com.extscreen.USB_ACCESSORY_PERMISSION"
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_ERROR = "error"
         const val EXTRA_NEED_PIN = "need_pin"

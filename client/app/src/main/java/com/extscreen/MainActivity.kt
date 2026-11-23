@@ -1,4 +1,4 @@
-package com.xdisplay
+package com.extscreen
 
 import android.app.Activity
 import android.content.BroadcastReceiver
@@ -291,7 +291,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         } else {
             WifiManager.WIFI_MODE_FULL_HIGH_PERF
         }
-        wifiLock = wifi.createWifiLock(mode, "xdisplay-stream").apply {
+        wifiLock = wifi.createWifiLock(mode, "extscreen-stream").apply {
             setReferenceCounted(false)
             acquire()
         }

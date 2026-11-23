@@ -2,7 +2,7 @@
 .SYNOPSIS
     Retry connecting the tablet over Wi-Fi: checks the PC side, then opens the tablet's connect screen.
 .DESCRIPTION
-    Run this, read the PIN from the XDisplay dashboard window that comes to the front, then on the
+    Run this, read the PIN from the ExtScreen dashboard window that comes to the front, then on the
     tablet tap your PC and type the PIN. After "Paired" you can unplug USB; the tablet reconnects
     without a PIN from then on.
 #>
@@ -18,19 +18,19 @@ function Step($ok, $text) {
 Write-Host "`nChecking the PC..." -ForegroundColor Cyan
 
 # 1. Host running and listening
-$hostProc = Get-Process xdisplay-host -ErrorAction SilentlyContinue
+$hostProc = Get-Process extscreen-host -ErrorAction SilentlyContinue
 if (-not $hostProc) {
     Write-Host "  Host not running; starting it..." -ForegroundColor Yellow
     & "$repo\scripts\launch_host.ps1" | Out-Null
     Start-Sleep 4
 }
 $listen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.OwningProcess -eq (Get-Process xdisplay-host -ErrorAction SilentlyContinue | Select-Object -First 1).Id }
+    Where-Object { $_.OwningProcess -eq (Get-Process extscreen-host -ErrorAction SilentlyContinue | Select-Object -First 1).Id }
 $port = ($listen | Select-Object -First 1).LocalPort
-Step ($null -ne $port) "XDisplay host listening on TCP $port"
+Step ($null -ne $port) "ExtScreen host listening on TCP $port"
 
 # 2. Firewall rules
-$rules = @(Get-NetFirewallRule -DisplayName "XDisplay Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
+$rules = @(Get-NetFirewallRule -DisplayName "ExtScreen Host (*" -ErrorAction SilentlyContinue | Where-Object Enabled -eq True)
 Step ($rules.Count -ge 2) "Firewall rules for USB Tethering / Wi-Fi present ($($rules.Count) rules)"
 if ($rules.Count -lt 2) {
     Write-Host "         Run once as administrator:  powershell -ExecutionPolicy Bypass -File `"$repo\scripts\setup_usb_tethering.ps1`"" -ForegroundColor Yellow
@@ -43,7 +43,7 @@ Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host ("  {0,-16} {1}" -f $_.IPAddress, $_.InterfaceAlias) }
 $public = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object NetworkCategory -eq "Public"
 if ($public) {
-    Write-Host "`n  These networks are 'Public', where the XDisplay rules do NOT apply:" -ForegroundColor Yellow
+    Write-Host "`n  These networks are 'Public', where the ExtScreen rules do NOT apply:" -ForegroundColor Yellow
     $public | ForEach-Object { Write-Host "    - $($_.Name) ($($_.InterfaceAlias))" -ForegroundColor Yellow }
     Write-Host "  Switch your Wi-Fi to Private: Settings > Network & internet > Wi-Fi > <network> > Private." -ForegroundColor Yellow
 }
@@ -52,17 +52,17 @@ if ($public) {
 & "$repo\scripts\launch_host.ps1" | Out-Null   # a second launch just focuses the existing dashboard
 $device = (& $adb devices | Select-String "\sdevice$")
 if ($device) {
-    & $adb shell am start -n com.xdisplay/.ConnectActivity | Out-Null
+    & $adb shell am start -n com.extscreen/.ConnectActivity | Out-Null
     Write-Host "`nTablet: connect screen opened." -ForegroundColor Green
 } else {
-    Write-Host "`nNo USB tablet found (fine if already paired): open XDisplay on the tablet yourself." -ForegroundColor Yellow
+    Write-Host "`nNo USB tablet found (fine if already paired): open ExtScreen on the tablet yourself." -ForegroundColor Yellow
 }
 
 Write-Host @"
 
 Next:
-  1. On the PC, look at the XDisplay dashboard > 'Wi-Fi & Pairing' card for the 6-digit PIN.
-     (Hidden? Click the XDisplay icon in the system tray.)
+  1. On the PC, look at the ExtScreen dashboard > 'Wi-Fi & Pairing' card for the 6-digit PIN.
+     (Hidden? Click the ExtScreen icon in the system tray.)
   2. On the tablet, tap your PC under 'PCs on this Wi-Fi' and type the PIN.
   3. When the picture appears, unplug USB.
 

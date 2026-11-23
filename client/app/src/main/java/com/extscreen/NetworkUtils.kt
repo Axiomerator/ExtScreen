@@ -1,4 +1,4 @@
-package com.xdisplay
+package com.extscreen
 
 import android.content.Context
 import android.content.Intent

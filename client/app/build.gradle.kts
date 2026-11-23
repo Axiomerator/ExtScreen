@@ -5,21 +5,21 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Release signing. The key never lives in the repository: point XDISPLAY_KEYSTORE_PROPERTIES at a
+// Release signing. The key never lives in the repository: point EXTSCREEN_KEYSTORE_PROPERTIES at a
 // properties file (storeFile, storePassword, keyAlias, keyPassword), or put `keystore.properties`
 // next to this project's settings file. Without one, release builds are left unsigned.
 val keystoreProps = Properties().apply {
-    val path = System.getenv("XDISPLAY_KEYSTORE_PROPERTIES") ?: rootProject.file("keystore.properties").path
+    val path = System.getenv("EXTSCREEN_KEYSTORE_PROPERTIES") ?: rootProject.file("keystore.properties").path
     val file = File(path)
     if (file.isFile) file.inputStream().use { load(it) }
 }
 
 android {
-    namespace = "com.xdisplay"
+    namespace = "com.extscreen"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.xdisplay"
+        applicationId = "com.extscreen"
         minSdk = 26 // Android 8.0 Oreo+ for MediaCodec low latency and modern NDK
         targetSdk = 34
         versionCode = 4

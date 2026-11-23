@@ -7,7 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorInfo, LoadCursorW, CURSORINFO, CURSOR_SHOWING, IDC_CROSS, IDC_HAND, IDC_IBEAM,
     IDC_SIZEALL,
 };
-use xdisplay_common::protocol::{cursor_shapes, CursorEvent};
+use extscreen_common::protocol::{cursor_shapes, CursorEvent};
 use crate::shared::HostShared;
 
 /// How often the tablet monitor's position is re-read (see `HostShared::refresh_display_geometry`).

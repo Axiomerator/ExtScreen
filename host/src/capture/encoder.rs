@@ -19,7 +19,7 @@ use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED};
 use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL};
-use xdisplay_common::protocol::VideoCodec;
+use extscreen_common::protocol::VideoCodec;
 
 /// One captured frame handed to an encoder.
 pub enum FrameInput<'a> {
@@ -253,7 +253,7 @@ impl MfVideoEncoder {
         let (events_tx, events) = mpsc::channel();
         let pump_gen = SendCom(event_gen);
         let pump = std::thread::Builder::new()
-            .name("xdisplay-mft-events".into())
+            .name("extscreen-mft-events".into())
             .spawn(move || {
                 let pump_gen = pump_gen;
                 let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);

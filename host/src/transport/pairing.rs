@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
-use xdisplay_common::{hex, random_bytes, random_pin, ClientId, DeviceSecret, HostId};
+use extscreen_common::{hex, random_bytes, random_pin, ClientId, DeviceSecret, HostId};
 
 /// Wrong PIN attempts tolerated before the PIN is replaced.
 pub const MAX_PIN_FAILURES: u32 = 5;
@@ -84,10 +84,10 @@ pub struct PairingStore {
 }
 
 impl PairingStore {
-    /// Loads `%APPDATA%\XDisplay\pairing.conf`, creating the host identity on first run.
+    /// Loads `%APPDATA%\ExtScreen\pairing.conf`, creating the host identity on first run.
     pub fn load_default() -> Self {
         let path = std::env::var_os("APPDATA")
-            .map(|appdata| PathBuf::from(appdata).join("XDisplay").join("pairing.conf"));
+            .map(|appdata| PathBuf::from(appdata).join("ExtScreen").join("pairing.conf"));
         Self::load(path)
     }
 
@@ -325,7 +325,7 @@ mod tests {
     use super::*;
 
     fn temp_path(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("xdisplay-pairing-test-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("extscreen-pairing-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("pairing.conf")
     }

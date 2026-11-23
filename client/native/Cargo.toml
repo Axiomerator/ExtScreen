@@ -1,5 +1,5 @@
 [package]
-name = "xdisplay-client-native"
+name = "extscreen-client-native"
 version = "1.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-xdisplay-common = { path = "../../common" }
+extscreen-common = { path = "../../common" }
 jni = "0.21"
 anyhow = "1.0"
 tracing = "0.1"

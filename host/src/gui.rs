@@ -64,7 +64,7 @@ unsafe fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = app_icon();
-    let tip_wide = to_wide_null("XDisplay - running");
+    let tip_wide = to_wide_null("ExtScreen - running");
     let copy_len = tip_wide.len().min(nid.szTip.len());
     nid.szTip[..copy_len].copy_from_slice(&tip_wide[..copy_len]);
     nid
@@ -140,7 +140,7 @@ pub fn usb_approval_prompt(device_name: &str) -> bool {
          (No answer within {} seconds counts as No.)",
         crate::transport::pairing::USB_APPROVAL_TIMEOUT.as_secs()
     ));
-    let caption = to_wide_null("XDisplay: allow new USB tablet?");
+    let caption = to_wide_null("ExtScreen: allow new USB tablet?");
     let style = (MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND).0;
     let ms = crate::transport::pairing::USB_APPROVAL_TIMEOUT.as_millis() as u32;
     let answer = unsafe {
@@ -231,7 +231,7 @@ pub fn run_adb_reverse(host_port: u16) -> bool {
 
 pub fn spawn_adb_watcher(shared: Arc<HostShared>) {
     thread::Builder::new()
-        .name("xdisplay-adb-device-tracker".into())
+        .name("extscreen-adb-device-tracker".into())
         .spawn(move || {
             // `adb track-devices` is an event stream maintained by the ADB server.  In
             // contrast to repeatedly spawning `adb devices`, it is idle while the USB
@@ -336,14 +336,14 @@ pub fn spawn_gui_dashboard(shared: Arc<HostShared>, show_window: bool) {
     set_status("Ready for tablet connection over USB or Wi-Fi");
 
     thread::Builder::new()
-        .name("xdisplay-gui-dashboard".into())
+        .name("extscreen-gui-dashboard".into())
         .spawn(move || {
             crate::shared::attach_to_default_desktop();
             unsafe {
                 let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
                     .map(|h| windows::Win32::Foundation::HINSTANCE(h.0))
                     .unwrap_or_default();
-                let class_name = to_wide_null("XDisplayDashboardClass");
+                let class_name = to_wide_null("ExtScreenDashboardClass");
                 let wnd_class = WNDCLASSW {
                     lpfnWndProc: Some(dashboard_window_proc),
                     hInstance: hinstance,
@@ -357,7 +357,7 @@ pub fn spawn_gui_dashboard(shared: Arc<HostShared>, show_window: bool) {
                 // Window dimensions: 760 x 690 px
                 let win_w = 760;
                 let win_h = 690;
-                let title = to_wide_null("XDisplay");
+                let title = to_wide_null("ExtScreen");
                 let visible = if show_window { WS_VISIBLE } else { WINDOW_STYLE(0) };
 
                 let hwnd = match CreateWindowExW(
@@ -376,7 +376,7 @@ pub fn spawn_gui_dashboard(shared: Arc<HostShared>, show_window: bool) {
                 ) {
                     Ok(h) => h,
                     Err(e) => {
-                        warn!("Failed to create XDisplay dashboard window: {}", e);
+                        warn!("Failed to create ExtScreen dashboard window: {}", e);
                         return;
                     }
                 };
@@ -395,7 +395,7 @@ pub fn spawn_gui_dashboard(shared: Arc<HostShared>, show_window: bool) {
                 TASKBAR_CREATED.store(RegisterWindowMessageW(PCWSTR(taskbar_created.as_ptr())), Ordering::Relaxed);
                 let nid = tray_icon_data(hwnd);
                 let _ = Shell_NotifyIconW(NIM_ADD, &nid);
-                info!("XDisplay dashboard & tray icon initialized");
+                info!("ExtScreen dashboard & tray icon initialized");
 
                 // The dashboard is diagnostic UI, not a render surface. Refresh it at 1 Hz and
                 // suppress invalidations while it is minimized to the tray.
@@ -412,7 +412,7 @@ pub fn spawn_gui_dashboard(shared: Arc<HostShared>, show_window: bool) {
                 let _ = KillTimer(hwnd, TIMER_TELEMETRY);
                 let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
                 let _ = DestroyWindow(hwnd);
-                info!("XDisplay dashboard closed");
+                info!("ExtScreen dashboard closed");
             }
         })
         .expect("Failed to spawn GUI dashboard thread");
@@ -529,10 +529,10 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         Err(_) => return,
     };
 
-    let title = to_wide_null("XDisplay");
+    let title = to_wide_null("ExtScreen");
     let dash_str = to_wide_null("🖥️ Open Dashboard");
     let adb_str = to_wide_null("⚡ Run ADB Reverse (Port 59100)");
-    let exit_str = to_wide_null("✕ Exit XDisplay");
+    let exit_str = to_wide_null("✕ Exit ExtScreen");
 
     let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_GRAYED, ID_TRAY_STATUS, PCWSTR(title.as_ptr()));
     let _ = InsertMenuW(menu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null());
@@ -676,7 +676,7 @@ unsafe fn paint_dashboard(hwnd: HWND, hdc: HDC) {
     let old_font = SelectObject(hdc, font_title);
     SetTextColor(hdc, text_bright);
     let header_rect = RECT { left: 24, top: 20, right: 450, bottom: 50 };
-    draw_text_helper(hdc, "✦ XDisplay Host", &header_rect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    draw_text_helper(hdc, "✦ ExtScreen Host", &header_rect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
     SelectObject(hdc, font_small);
     SetTextColor(hdc, text_muted);
@@ -1026,7 +1026,7 @@ unsafe fn handle_click(hwnd: HWND, x: i32, y: i32) {
                         let text = to_wide_null(&format!(
                             "Forget {count} paired tablet(s)? They will need the PIN again over Wi-Fi, or your approval again over USB."
                         ));
-                        let title = to_wide_null("XDisplay");
+                        let title = to_wide_null("ExtScreen");
                         let answer = MessageBoxW(hwnd, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_YESNO | MB_ICONQUESTION);
                         if answer == IDYES {
                             shared.pairing.forget_all();

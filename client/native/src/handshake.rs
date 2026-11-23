@@ -1,13 +1,13 @@
-//! Tablet side of the connection handshake (see `xdisplay_common::crypto` for the design).
+//! Tablet side of the connection handshake (see `extscreen_common::crypto` for the design).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
-use xdisplay_common::protocol::{
+use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, AuthRejectReason, ClientHello, ControlMessage, PacketHeader, HEADER_SIZE,
     PROTOCOL_VERSION,
 };
-use xdisplay_common::{transcript, HostId, Opener, PakeClient, Role, Sealer};
+use extscreen_common::{transcript, HostId, Opener, PakeClient, Role, Sealer};
 
 use crate::transport::ClientConfig;
 
@@ -46,10 +46,10 @@ fn write_control(stream: &mut TcpStream, msg: &ControlMessage) -> Result<(), Han
 fn read_control(stream: &mut TcpStream) -> Result<ControlMessage, HandshakeError> {
     let mut hdr = [0u8; HEADER_SIZE];
     stream.read_exact(&mut hdr).map_err(io_err)?;
-    let header = PacketHeader::from_bytes(&hdr).ok_or_else(|| io_err("not an XDisplay host"))?;
+    let header = PacketHeader::from_bytes(&hdr).ok_or_else(|| io_err("not an ExtScreen host"))?;
     if header.version != PROTOCOL_VERSION {
         return Err(HandshakeError::Rejected(format!(
-            "The PC runs a different XDisplay version (protocol {} vs {PROTOCOL_VERSION}). Update both apps.",
+            "The PC runs a different ExtScreen version (protocol {} vs {PROTOCOL_VERSION}). Update both apps.",
             header.version
         )));
     }
@@ -158,8 +158,8 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
-    use xdisplay_common::protocol::{HelloAck, VideoCodec};
-    use xdisplay_common::{host_respond, DeviceSecret};
+    use extscreen_common::protocol::{HelloAck, VideoCodec};
+    use extscreen_common::{host_respond, DeviceSecret};
 
     const HOST_ID: HostId = [0x42; 16];
     const CLIENT_ID: [u8; 16] = [0x07; 16];

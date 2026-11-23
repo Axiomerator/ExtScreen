@@ -17,12 +17,12 @@ use crate::capture::rate_control::{Link, MIN_KBPS};
 use crate::capture::{find_virtual_display, monitor_rect, virtual_display, VideoPacket};
 use crate::input::spawn_cursor_tracker;
 use crate::shared::{HighResTimerGuard, HostShared, LinkKind, SessionInfo};
-use xdisplay_common::input::{KeyEvent, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::input::{KeyEvent, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, ClientHello, ControlMessage, CursorEvent, PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO,
     HEADER_SIZE,
 };
-use xdisplay_common::DeviceSecret;
+use extscreen_common::DeviceSecret;
 
 pub const DEFAULT_PORT: u16 = 59100;
 
@@ -121,7 +121,7 @@ const SESSION_TAKEN_GRACE: Duration = Duration::from_millis(300);
 
 struct ActiveSession {
     task: JoinHandle<()>,
-    client_id: xdisplay_common::ClientId,
+    client_id: extscreen_common::ClientId,
     ctrl_tx: mpsc::Sender<ControlMessage>,
 }
 
@@ -136,7 +136,7 @@ impl TransportServer {
     /// whole port ranges that change between boots). Wi-Fi tablets learn the real port from
     /// discovery and USB goes through `adb reverse`, so a fallback port still works.
     pub async fn bind(preferred: u16, shared: Arc<HostShared>) -> Result<Self> {
-        let bind_host = std::env::var("XDISPLAY_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let bind_host = std::env::var("EXTSCREEN_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
         let listener = match TcpListener::bind((bind_host.as_str(), preferred)).await {
             Ok(listener) => listener,
             Err(e) if preferred != 0 => {

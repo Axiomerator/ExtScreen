@@ -29,7 +29,7 @@ use crate::capture::encoder::{
 use crate::capture::rate_control::RateController;
 use crate::capture::virtual_display;
 use crate::shared::{CachedIdr, HostShared};
-use xdisplay_common::protocol::VideoCodec;
+use extscreen_common::protocol::VideoCodec;
 
 #[derive(Clone, Debug)]
 pub struct VideoPacket {
@@ -417,7 +417,7 @@ impl EncoderState {
         captured_at: Instant,
     ) {
         let codec = self.encoder_codec.unwrap_or(VideoCodec::H264);
-        let info = xdisplay_common::nal::inspect_for_codec(&data, codec);
+        let info = extscreen_common::nal::inspect_for_codec(&data, codec);
         if info.has_config {
             let end = info.first_slice.unwrap_or(data.len());
             self.last_config.clear();
@@ -873,7 +873,7 @@ pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>)
     let pump_shared = shared.clone();
     let pump_video_tx = video_tx.clone();
     thread::Builder::new()
-        .name("xdisplay-idle-pump".into())
+        .name("extscreen-idle-pump".into())
         .spawn(move || {
             while pump_shared.is_running.load(Ordering::Relaxed) {
                 thread::sleep(PUMP_INTERVAL);
@@ -914,7 +914,7 @@ pub fn start_wgc_capture(video_tx: Sender<VideoPacket>, shared: Arc<HostShared>)
     let cap_state = state;
 
     thread::Builder::new()
-        .name("xdisplay-wgc-capture".into())
+        .name("extscreen-wgc-capture".into())
         .spawn(move || {
             crate::shared::raise_thread_priority();
             while cap_shared.is_running.load(Ordering::Relaxed) {

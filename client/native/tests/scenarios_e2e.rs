@@ -9,17 +9,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use xdisplay_client_native::discovery::Discovery;
-use xdisplay_client_native::transport::{
+use extscreen_client_native::discovery::Discovery;
+use extscreen_client_native::transport::{
     ClientConfig, TransportClient, STATUS_AUTH_FAILED, STATUS_CONNECTED, STATUS_NEEDS_PIN,
     STATUS_TAKEN_OVER,
 };
-use xdisplay_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, AuthRejectReason, ControlMessage, CursorEvent,
     PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO, HEADER_SIZE,
 };
-use xdisplay_common::{hex, host_respond, transcript, DeviceSecret, HostId, Opener, Role, Sealer};
+use extscreen_common::{hex, host_respond, transcript, DeviceSecret, HostId, Opener, Role, Sealer};
 
 const TEST_HOST_ID: HostId = [0xA5; 16];
 const TEST_CLIENT_ID: [u8; 16] = [0x42; 16];
@@ -84,7 +84,7 @@ fn accept_encrypted_handshake(
     };
     send_ctrl(
         stream,
-        &ControlMessage::HelloAck(xdisplay_common::protocol::HelloAck {
+        &ControlMessage::HelloAck(extscreen_common::protocol::HelloAck {
             host_id: TEST_HOST_ID,
             host_name: "Scenario-PC".into(),
             auth: AuthPolicy::PasswordRequired,

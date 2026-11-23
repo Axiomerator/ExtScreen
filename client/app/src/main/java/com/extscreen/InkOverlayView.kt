@@ -1,4 +1,4 @@
-package com.xdisplay
+package com.extscreen
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -11,7 +11,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
-import com.xdisplay.NativeEngine.BITRATE_AUTO
+import com.extscreen.NativeEngine.BITRATE_AUTO
 import kotlin.math.roundToInt
 
 /**
@@ -1337,7 +1337,7 @@ class InkOverlayView(context: Context) : View(context) {
 
         // Title
         modalHeaderPaint.textSize = 20f * density
-        canvas.drawText("⚙ XDisplay Stream & Input Settings", modalCardRect.left + 24f * density, modalCardRect.top + 34f * density, modalHeaderPaint)
+        canvas.drawText("⚙ ExtScreen Stream & Input Settings", modalCardRect.left + 24f * density, modalCardRect.top + 34f * density, modalHeaderPaint)
 
         var curY = modalCardRect.top + 60f * density
         modalLabelPaint.textSize = 13f * density
@@ -1617,8 +1617,8 @@ class InkOverlayView(context: Context) : View(context) {
         landingTipPaint.color = Color.rgb(90, 115, 145)
         val hint = when {
             isUsbTetherLink -> "Plug in the USB cable and turn on USB Tethering on this device"
-            isUsbLink -> "Connect the USB cable to a Windows PC running XDisplay to start"
-            else -> "Make sure XDisplay is running on the PC and this device is on the same Wi-Fi"
+            isUsbLink -> "Connect the USB cable to a Windows PC running ExtScreen to start"
+            else -> "Make sure ExtScreen is running on the PC and this device is on the same Wi-Fi"
         }
         canvas.drawText(hint, centerX, chipY + 22f * density, landingTipPaint)
     }

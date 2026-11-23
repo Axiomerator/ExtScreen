@@ -10,8 +10,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
-use xdisplay_common::input::{actions, buttons, tool_types, PointerEvent};
-use xdisplay_common::protocol::{
+use extscreen_common::input::{actions, buttons, tool_types, PointerEvent};
+use extscreen_common::protocol::{
     flags, msg_types, ClientHello, ControlMessage, PacketHeader, ServerConfig, VideoCodec, HEADER_SIZE,
 };
 
@@ -48,7 +48,7 @@ async fn next_packet(client: &mut TcpStream, hdr_buf: &mut [u8; HEADER_SIZE]) ->
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("============================================================");
-    println!("      XDisplay End-to-End Latency, Feature & Bug Benchmark   ");
+    println!("      ExtScreen End-to-End Latency, Feature & Bug Benchmark   ");
     println!("============================================================");
 
     // =========================================================================

@@ -4,16 +4,16 @@
 //! unicast `OFFER`. Discovery is advisory only: it carries no secrets and a spoofed
 //! announcement cannot get past the authenticated handshake that follows.
 //!
-//! Text format (one datagram): `XDISPLAY2 <BEACON|OFFER> <host_id hex> <tcp port> <name>`
+//! Text format (one datagram): `EXTSCREEN2 <BEACON|OFFER> <host_id hex> <tcp port> <name>`
 //! (the name is last so it may contain spaces).
 
 use crate::crypto::{HostId, HOST_ID_LEN};
 use crate::hex;
 
 pub const DISCOVERY_PORT: u16 = 59101;
-pub const PROBE: &[u8] = b"XDISPLAY2 DISCOVER";
+pub const PROBE: &[u8] = b"EXTSCREEN2 DISCOVER";
 
-const PREFIX: &str = "XDISPLAY2";
+const PREFIX: &str = "EXTSCREEN2";
 const MAX_NAME_CHARS: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,8 +82,8 @@ mod tests {
         assert_eq!(HostAnnouncement::parse(PROBE), None);
         assert_eq!(HostAnnouncement::parse(b"hello"), None);
         assert_eq!(HostAnnouncement::parse(&[0xFF, 0xFE]), None);
-        assert_eq!(HostAnnouncement::parse(b"XDISPLAY2 BEACON zz 59100 name"), None);
-        let zero_port = format!("XDISPLAY2 OFFER {} 0 n", hex::encode(&[1u8; HOST_ID_LEN]));
+        assert_eq!(HostAnnouncement::parse(b"EXTSCREEN2 BEACON zz 59100 name"), None);
+        let zero_port = format!("EXTSCREEN2 OFFER {} 0 n", hex::encode(&[1u8; HOST_ID_LEN]));
         assert_eq!(HostAnnouncement::parse(zero_port.as_bytes()), None);
     }
 

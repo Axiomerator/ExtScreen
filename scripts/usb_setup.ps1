@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    One-time setup for plug-and-play USB without USB debugging. Run XDisplay-USB-Setup.cmd.
+    One-time setup for plug-and-play USB without USB debugging. Run ExtScreen-USB-Setup.cmd.
 .DESCRIPTION
     With USB debugging off, Windows binds an Android device to its file-transfer (MTP) driver,
     and the host cannot ask it to switch to accessory mode through that driver. This script binds
@@ -11,8 +11,8 @@
     their drivers. No filter driver is installed (unlike UsbDk, which 1.0.1 removed because it
     crashed Windows). While bound, Windows cannot browse that device's files over USB.
 
-    Every binding is recorded in HKLM\SOFTWARE\XDisplay\UsbBindings; -Undo removes them all and
-    Windows reinstalls the normal drivers. The XDisplay uninstaller runs -Undo too.
+    Every binding is recorded in HKLM\SOFTWARE\ExtScreen\UsbBindings; -Undo removes them all and
+    Windows reinstalls the normal drivers. The ExtScreen uninstaller runs -Undo too.
 .PARAMETER Undo
     Remove every binding this script made.
 .PARAMETER Quiet
@@ -32,7 +32,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$BindingsKey = 'HKLM:\SOFTWARE\XDisplay\UsbBindings'
+$BindingsKey = 'HKLM:\SOFTWARE\ExtScreen\UsbBindings'
 
 function Say([string]$text, [string]$color = 'Gray') { Write-Host $text -ForegroundColor $color }
 function Finish([int]$code) {
@@ -49,11 +49,11 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 # restart this script elevated. That is the only UAC prompt.
 # ---------------------------------------------------------------------------------------------
 if (-not $isAdmin) {
-    if (-not $Undo -and -not (Get-Process xdisplay-host -ErrorAction SilentlyContinue)) {
-        $hostExe = @("$PSScriptRoot\..\xdisplay-host.exe", "$PSScriptRoot\..\target\release\xdisplay-host.exe") |
+    if (-not $Undo -and -not (Get-Process extscreen-host -ErrorAction SilentlyContinue)) {
+        $hostExe = @("$PSScriptRoot\..\extscreen-host.exe", "$PSScriptRoot\..\target\release\extscreen-host.exe") |
             Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($hostExe) {
-            Say "Starting XDisplay..."
+            Say "Starting ExtScreen..."
             Start-Process -FilePath (Resolve-Path $hostExe).Path -ArgumentList '--minimized' | Out-Null
         }
     }
@@ -66,13 +66,13 @@ if (-not $isAdmin) {
         exit $p.ExitCode
     } catch {
         Say "Windows needs administrator approval to change a device driver, and it was not given." Yellow
-        Say "Run XDisplay-USB-Setup again and choose Yes." Yellow
+        Say "Run ExtScreen-USB-Setup again and choose Yes." Yellow
         Finish 1
     }
 }
 
 if ($LogFile) { Start-Transcript -Path $LogFile -Force | Out-Null }
-$Host.UI.RawUI.WindowTitle = 'XDisplay - USB setup (no USB debugging)'
+$Host.UI.RawUI.WindowTitle = 'ExtScreen - USB setup (no USB debugging)'
 
 Add-Type -TypeDefinition @'
 using System;
@@ -336,9 +336,9 @@ public static class XdUsb {
 }
 '@
 
-# Must match XDISPLAY_* in host/src/transport/aoa.rs (and the app's accessory_filter.xml).
-$AoaStrings = @('XDisplay', 'XDisplay Companion', 'XDisplay Ultra-Low Latency Display', '1.0',
-    'https://github.com/24f2006988/xdisplay', '1')
+# Must match EXTSCREEN_* in host/src/transport/aoa.rs (and the app's accessory_filter.xml).
+$AoaStrings = @('ExtScreen', 'ExtScreen Companion', 'ExtScreen Ultra-Low Latency Display', '1.0',
+    'https://github.com/Axiomerator/ExtScreen', '1')
 
 function Get-Bindings {
     if (-not (Test-Path $BindingsKey)) { return @{} }
@@ -389,7 +389,7 @@ function Bind-Device($dev, [string]$kind) {
 if ($Undo) {
     $bindings = Get-Bindings
     if ($bindings.Count -eq 0) {
-        Say "Nothing to undo: XDisplay USB setup has not changed any device driver."
+        Say "Nothing to undo: ExtScreen USB setup has not changed any device driver."
         Finish 0
     }
     foreach ($id in $bindings.Keys) {
@@ -411,10 +411,10 @@ if ($Undo) {
 # Setup
 # ---------------------------------------------------------------------------------------------
 Say "=====================================================================" Cyan
-Say "  XDisplay USB setup: plug-and-play USB without USB debugging" Cyan
+Say "  ExtScreen USB setup: plug-and-play USB without USB debugging" Cyan
 Say "=====================================================================" Cyan
 Say "This binds Microsoft's WinUSB driver to your phone/tablet only. While it is bound, Windows"
-Say "cannot browse that device's files over USB. Undo any time: XDisplay-USB-Setup.cmd -Undo"
+Say "cannot browse that device's files over USB. Undo any time: ExtScreen-USB-Setup.cmd -Undo"
 Say "(or 'Undo USB setup' in the Start menu)."
 Say ""
 
@@ -459,7 +459,7 @@ try {
         $switchTargets += $dev.InstanceId
     }
 
-    # Ask the device to switch to accessory mode. If the XDisplay host is running it does the
+    # Ask the device to switch to accessory mode. If the ExtScreen host is running it does the
     # same on its own, and whichever opens the device first sends the request.
     foreach ($id in $switchTargets) {
         $until = (Get-Date).AddSeconds(10)
@@ -480,7 +480,7 @@ try {
 
     # Bind the accessory device the tablet comes back as.
     Say ""
-    Say "Waiting for the device to reconnect as an XDisplay accessory..."
+    Say "Waiting for the device to reconnect as an ExtScreen accessory..."
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     $done = $false
     do {
@@ -494,10 +494,10 @@ try {
     Say ""
     if ($done) {
         Say "USB setup finished." Green
-        Say "On the device, tap OK on 'Open XDisplay for this USB accessory?' (tick 'Always')." Green
-        Say "From now on just plug it in while XDisplay is running on the PC." Green
+        Say "On the device, tap OK on 'Open ExtScreen for this USB accessory?' (tick 'Always')." Green
+        Say "From now on just plug it in while ExtScreen is running on the PC." Green
     } else {
-        Say "The device did not come back as an accessory yet. Make sure the XDisplay app is" Yellow
+        Say "The device did not come back as an accessory yet. Make sure the ExtScreen app is" Yellow
         Say "installed on it, then unplug it, plug it in again and run this setup once more." Yellow
     }
     if ($needReboot) { Say "Unplug the device and plug it in again to finish the driver change." Yellow }

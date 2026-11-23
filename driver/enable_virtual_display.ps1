@@ -11,7 +11,7 @@ if ($vddPackage) {
     $inf = ""
 }
 
-Write-Host "=== XDisplay: Configuring Secondary Virtual Monitor (MttVDD) ===" -ForegroundColor Cyan
+Write-Host "=== ExtScreen: Configuring Secondary Virtual Monitor (MttVDD) ===" -ForegroundColor Cyan
 
 # 1. Ensure C:\VirtualDisplayDriver directory and vdd_settings.xml exist
 $targetDir = "C:\VirtualDisplayDriver"
@@ -80,7 +80,7 @@ if ($vdd -and $vdd.Status -eq "OK" -and -not $needsRestart) {
         Enable-PnpDevice -InstanceId "ROOT\DISPLAY\0000" -Confirm:$false -ErrorAction SilentlyContinue
     }
     $bundledInf = Join-Path $PSScriptRoot "..\installer\redist\vdd\MttVDD.inf"
-    $hostExe = Join-Path $PSScriptRoot "..\target\release\xdisplay-host.exe"
+    $hostExe = Join-Path $PSScriptRoot "..\target\release\extscreen-host.exe"
     if (-not $vdd -and -not ($devcon -and (Test-Path $devcon)) -and (Test-Path $bundledInf) -and (Test-Path $hostExe)) {
         # No winget package: install the driver bundled with the source tree (needs administrator).
         $p = Start-Process -FilePath $hostExe -ArgumentList "--install-display-driver", "`"$((Resolve-Path $bundledInf).Path)`"" -Wait -PassThru

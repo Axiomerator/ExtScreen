@@ -1,7 +1,7 @@
 //! Plug-and-play USB without USB debugging, via the Android Open Accessory protocol (AOA 2.0).
 //!
 //! The PC asks an Android tablet to switch into accessory mode; the tablet re-enumerates as a
-//! Google accessory device (18D1:2D00/2D01) and Android offers to open XDisplay. The accessory's
+//! Google accessory device (18D1:2D00/2D01) and Android offers to open ExtScreen. The accessory's
 //! two bulk endpoints are then bridged to the host's own TCP server on loopback, so the session
 //! (handshake, video, input) is exactly the one used over adb or Wi-Fi.
 //!
@@ -10,10 +10,10 @@
 //! to its MTP driver only, and WinUSB cannot send it the request. UsbDk can, but it is a filter
 //! on every USB stack: it blue-screened Windows on unplug (0x10D) and its redirect makes a
 //! tablet whose MTP driver failed at boot come back as "USB device not recognized" (code 43).
-//! It is therefore used only when `XDISPLAY_ENABLE_USBDK=1` is set, and 1.0.1+ installers no
+//! It is therefore used only when `EXTSCREEN_ENABLE_USBDK=1` is set, and 1.0.1+ installers no
 //! longer install it.
 //!
-//! The supported debugging-off path is `scripts/usb_setup.ps1` (XDisplay-USB-Setup.cmd): it binds
+//! The supported debugging-off path is `scripts/usb_setup.ps1` (ExtScreen-USB-Setup.cmd): it binds
 //! Microsoft's inbox WinUSB driver to the device's MTP interface and to its accessory device, per
 //! device instance, so the plain WinUSB backend below reaches both. No filter driver is involved.
 
@@ -44,12 +44,12 @@ pub const AOA_STR_URI: u16 = 4;
 pub const AOA_STR_SERIAL: u16 = 5;
 
 // Must match `client/app/src/main/res/xml/accessory_filter.xml`, or Android will not offer the app.
-pub const XDISPLAY_MANUFACTURER: &str = "XDisplay\0";
-pub const XDISPLAY_MODEL: &str = "XDisplay Companion\0";
-pub const XDISPLAY_DESC: &str = "XDisplay Ultra-Low Latency Display\0";
-pub const XDISPLAY_VER: &str = "1.0\0";
-pub const XDISPLAY_URI: &str = "https://github.com/24f2006988/xdisplay\0";
-pub const XDISPLAY_SERIAL: &str = "1\0";
+pub const EXTSCREEN_MANUFACTURER: &str = "ExtScreen\0";
+pub const EXTSCREEN_MODEL: &str = "ExtScreen Companion\0";
+pub const EXTSCREEN_DESC: &str = "ExtScreen Ultra-Low Latency Display\0";
+pub const EXTSCREEN_VER: &str = "1.0\0";
+pub const EXTSCREEN_URI: &str = "https://github.com/Axiomerator/ExtScreen\0";
+pub const EXTSCREEN_SERIAL: &str = "1\0";
 
 const SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// Switch attempts per plug-in. Right after logon or a restart the tablet is often listed
@@ -85,7 +85,7 @@ enum HelloScan {
 /// old connection may still be sending input packets, and a new session opened on those bytes
 /// (often mid-packet) is rejected by the server, delaying the reconnect by seconds.
 fn scan_for_hello(buf: &[u8]) -> HelloScan {
-    use xdisplay_common::protocol::{msg_types, PacketHeader, HEADER_SIZE, PROTOCOL_VERSION};
+    use extscreen_common::protocol::{msg_types, PacketHeader, HEADER_SIZE, PROTOCOL_VERSION};
     const PREFIX: usize = HEADER_SIZE + 4;
     let mut i = 0;
     while i + PREFIX <= buf.len() {
@@ -184,7 +184,7 @@ fn port_key(device: &Device<Context>) -> (u8, Vec<u8>) {
 
 /// Starts the background plug-and-play USB manager.
 pub fn spawn_aoa_manager(shared: Arc<HostShared>) {
-    let spawned = thread::Builder::new().name("xdisplay-aoa".into()).spawn(move || {
+    let spawned = thread::Builder::new().name("extscreen-aoa".into()).spawn(move || {
         // Poll, switch and bridge through libusb's WinUSB backend only (see the module docs for
         // why UsbDk is opt-in).
         let Ok(winusb) = Context::new() else {
@@ -284,7 +284,7 @@ fn run_manager(winusb: Context, shared: Arc<HostShared>) {
                 accessory_scans.remove(&port);
                 bridge_active.store(true, Ordering::Release);
                 let (shared, active) = (shared.clone(), bridge_active.clone());
-                let spawned = thread::Builder::new().name("xdisplay-aoa-rx".into()).spawn(move || {
+                let spawned = thread::Builder::new().name("extscreen-aoa-rx".into()).spawn(move || {
                     struct ClearOnDrop(Arc<AtomicBool>);
                     impl Drop for ClearOnDrop {
                         fn drop(&mut self) {
@@ -335,8 +335,8 @@ fn run_manager(winusb: Context, shared: Arc<HostShared>) {
                 ),
                 (Err(e), false) if attempts.tries > 1 => info!(
                     "{vid:04X}:{pid:04X} did not switch to accessory mode after {} tries ({e}). With USB \
-                     debugging off, run XDisplay-USB-Setup once (Start menu: USB setup) so Windows lets \
-                     XDisplay reach the device; or enable USB debugging, or use Wi-Fi",
+                     debugging off, run ExtScreen-USB-Setup once (Start menu: USB setup) so Windows lets \
+                     ExtScreen reach the device; or enable USB debugging, or use Wi-Fi",
                     attempts.tries
                 ),
                 (Err(e), false) => debug!("{vid:04X}:{pid:04X} cannot use accessory mode: {e}"),
@@ -352,7 +352,7 @@ fn usb_busy(shared: &HostShared) -> bool {
 
 /// UsbDk fallback for MTP-only tablets (USB debugging off). Opt-in; see the module docs.
 fn usbdk_enabled() -> bool {
-    std::env::var_os("XDISPLAY_ENABLE_USBDK").is_some_and(|v| v == "1")
+    std::env::var_os("EXTSCREEN_ENABLE_USBDK").is_some_and(|v| v == "1")
 }
 
 /// Uses a temporary UsbDk context only for the control transfer that switches an MTP-bound
@@ -393,12 +393,12 @@ fn request_accessory_mode(device: &Device<Context>, abort: impl Fn() -> bool) ->
     }
 
     for (index, text) in [
-        (AOA_STR_MANUFACTURER, XDISPLAY_MANUFACTURER),
-        (AOA_STR_MODEL, XDISPLAY_MODEL),
-        (AOA_STR_DESCRIPTION, XDISPLAY_DESC),
-        (AOA_STR_VERSION, XDISPLAY_VER),
-        (AOA_STR_URI, XDISPLAY_URI),
-        (AOA_STR_SERIAL, XDISPLAY_SERIAL),
+        (AOA_STR_MANUFACTURER, EXTSCREEN_MANUFACTURER),
+        (AOA_STR_MODEL, EXTSCREEN_MODEL),
+        (AOA_STR_DESCRIPTION, EXTSCREEN_DESC),
+        (AOA_STR_VERSION, EXTSCREEN_VER),
+        (AOA_STR_URI, EXTSCREEN_URI),
+        (AOA_STR_SERIAL, EXTSCREEN_SERIAL),
     ] {
         handle.write_control(vendor_out, AOA_SEND_STRING, 0, index, text.as_bytes(), CONTROL_TIMEOUT)?;
     }
@@ -482,7 +482,7 @@ impl Session {
         let sender = {
             let (handle, done, mut tcp) = (handle.clone(), done.clone(), tcp.try_clone()?);
             let (endpoint, packet) = (ep.bulk_out, ep.out_packet);
-            thread::Builder::new().name("xdisplay-aoa-tx".into()).spawn(move || {
+            thread::Builder::new().name("extscreen-aoa-tx".into()).spawn(move || {
                 crate::shared::raise_thread_priority();
                 tcp_to_usb(&handle, endpoint, packet, &mut tcp, &done);
                 done.store(true, Ordering::Release);
@@ -500,7 +500,7 @@ impl Session {
 
 /// Pumps bytes between the accessory and the host's server while the tablet stays plugged in.
 /// A loopback session is opened only when the tablet sends something (its hello): before the
-/// user accepts the "Open XDisplay?" prompt the server would otherwise time the handshake out
+/// user accepts the "Open ExtScreen?" prompt the server would otherwise time the handshake out
 /// over and over. When a session ends, the next hello from the tablet opens a new one.
 fn bridge((handle, ep): (DeviceHandle<Context>, Endpoints), shared: &HostShared) -> anyhow::Result<()> {
     let handle = Arc::new(handle);
@@ -593,7 +593,7 @@ fn tcp_to_usb(handle: &DeviceHandle<Context>, endpoint: u8, packet: usize, tcp: 
 #[cfg(test)]
 mod tests {
     use super::{scan_for_hello, HelloScan};
-    use xdisplay_common::protocol::{flags, msg_types, ControlMessage, PacketHeader, HEADER_SIZE};
+    use extscreen_common::protocol::{flags, msg_types, ControlMessage, PacketHeader, HEADER_SIZE};
 
     fn packet(msg_type: u8, payload: &[u8]) -> Vec<u8> {
         let mut v = PacketHeader::new(msg_type, flags::NONE, 0, 0, payload.len() as u32, 0).to_bytes().to_vec();
@@ -649,8 +649,8 @@ mod tests {
     fn test_aoa_string_descriptors() {
         assert_eq!(AOA_STR_MANUFACTURER, 0);
         assert_eq!(AOA_STR_MODEL, 1);
-        assert!(XDISPLAY_MANUFACTURER.ends_with('\0'));
-        assert!(XDISPLAY_MODEL.ends_with('\0'));
+        assert!(EXTSCREEN_MANUFACTURER.ends_with('\0'));
+        assert!(EXTSCREEN_MODEL.ends_with('\0'));
     }
 
     #[test]
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn usbdk_is_off_by_default() {
-        if std::env::var_os("XDISPLAY_ENABLE_USBDK").is_none() {
+        if std::env::var_os("EXTSCREEN_ENABLE_USBDK").is_none() {
             assert!(!usbdk_enabled());
         }
     }
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn accessory_strings_match_the_app_filter() {
         let filter = include_str!("../../../client/app/src/main/res/xml/accessory_filter.xml");
-        for text in [XDISPLAY_MANUFACTURER, XDISPLAY_MODEL, XDISPLAY_VER] {
+        for text in [EXTSCREEN_MANUFACTURER, EXTSCREEN_MODEL, EXTSCREEN_VER] {
             let value = text.trim_end_matches('\0');
             assert!(
                 filter.contains(&format!("\"{value}\"")),

@@ -2,7 +2,7 @@
 //! connection must pair with the PIN, receive encrypted video, resume with the issued secret,
 //! and be refused with a wrong PIN or without authenticating.
 //!
-//! Run: `cargo run -p xdisplay-host --bin test_wireless_e2e`
+//! Run: `cargo run -p extscreen-host --bin test_wireless_e2e`
 #![allow(dead_code, unused_imports)]
 use anyhow::{bail, Context, Result};
 use std::net::{IpAddr, SocketAddr};
@@ -12,10 +12,10 @@ use tokio::io::{split, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-use xdisplay_common::protocol::{
+use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, ClientHello, ControlMessage, PacketHeader, VideoCodec,
 };
-use xdisplay_common::{transcript, PakeClient, Role};
+use extscreen_common::{transcript, PakeClient, Role};
 
 #[path = "../capture/mod.rs"]
 mod capture;
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()))
         .init();
-    println!("== XDisplay wireless end-to-end ==");
+    println!("== ExtScreen wireless end-to-end ==");
     let Some(lan_ip) = transport::lan_addresses().into_iter().next() else {
         println!("  SKIP  no LAN address on this PC; a non-loopback peer cannot be simulated");
         return Ok(());

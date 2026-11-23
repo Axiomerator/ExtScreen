@@ -44,5 +44,5 @@ fn main() {
             Err(e) => println!("frame {n:>2}: ERR {e}"),
         }
     }
-    let _ = std::fs::write(std::env::temp_dir().join("xdisplay_mf_stream.h264"), dump);
+    let _ = std::fs::write(std::env::temp_dir().join("extscreen_mf_stream.h264"), dump);
 }

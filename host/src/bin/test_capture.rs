@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::Write;
 
 fn main() -> Result<()> {
-    let mut log = File::create("d:/xdisplay/test_capture_out.txt")?;
+    let mut log = File::create("d:/extscreen/test_capture_out.txt")?;
     writeln!(log, "=== Test Capture Diagnostics ===")?;
 
 
@@ -87,7 +87,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    println!("Done. Output written to d:/xdisplay/test_capture_out.txt");
+    println!("Done. Output written to d:/extscreen/test_capture_out.txt");
     Ok(())
 }
 

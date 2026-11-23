@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "xdisplay-client"
+rootProject.name = "extscreen-client"
 include(":app")

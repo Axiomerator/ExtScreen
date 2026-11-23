@@ -1,9 +1,9 @@
 //! Throughput of the session cipher on this machine (video-sized packets).
-//! `cargo run --release -p xdisplay-common --example crypto_bench`
+//! `cargo run --release -p extscreen-common --example crypto_bench`
 //! Compare backends with RUSTFLAGS="--cfg chacha20_force_soft".
 use std::time::Instant;
-use xdisplay_common::protocol::{flags, msg_types, PacketHeader};
-use xdisplay_common::{host_respond, transcript, PakeClient, Role};
+use extscreen_common::protocol::{flags, msg_types, PacketHeader};
+use extscreen_common::{host_respond, transcript, PakeClient, Role};
 
 fn main() {
     let host_id = [2u8; 16];

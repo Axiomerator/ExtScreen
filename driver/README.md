@@ -1,6 +1,6 @@
 # Virtual display driver
 
-XDisplay uses the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+ExtScreen uses the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
 (MttVDD, MIT licensed, Microsoft-signed) to give Windows a real extra monitor. The signed x64 driver
 package is redistributed in `installer/redist/vdd/` and installed by the Windows installer.
 
@@ -17,7 +17,7 @@ driver.
 The host can also manage the driver directly (administrator rights needed):
 
 ```powershell
-xdisplay-host.exe --install-display-driver path\to\MttVDD.inf   # exit 0, or 3010 = restart needed
-xdisplay-host.exe --query-display-driver                        # exit 0 when the device exists
-xdisplay-host.exe --uninstall-display-driver
+extscreen-host.exe --install-display-driver path\to\MttVDD.inf   # exit 0, or 3010 = restart needed
+extscreen-host.exe --query-display-driver                        # exit 0 when the device exists
+extscreen-host.exe --uninstall-display-driver
 ```

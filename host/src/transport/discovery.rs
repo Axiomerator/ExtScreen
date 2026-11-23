@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tracing::{debug, info, warn};
-use xdisplay_common::discovery::{AnnouncementKind, HostAnnouncement, DISCOVERY_PORT, PROBE};
+use extscreen_common::discovery::{AnnouncementKind, HostAnnouncement, DISCOVERY_PORT, PROBE};
 
 use super::usb_tether;
 use crate::shared::HostShared;

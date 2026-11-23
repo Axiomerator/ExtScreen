@@ -1,6 +1,6 @@
 //! Live WGC capture -> production encoder path (D3D11 texture input when available).
 //! Prints which encoder was chosen, per-frame encode time and NAL types, and writes the raw
-//! Annex-B stream to %TEMP%\xdisplay_wgc_encode.h264 for inspection (e.g. `ffprobe`).
+//! Annex-B stream to %TEMP%\extscreen_wgc_encode.h264 for inspection (e.g. `ffprobe`).
 //!
 //! Usage: test_wgc_encode [frames] [--cpu]
 #![allow(dead_code)]
@@ -82,7 +82,7 @@ impl GraphicsCaptureApiHandler for Handler {
         self.encode_ms.push(ms);
 
         for p in &out {
-            let kinds: Vec<u8> = xdisplay_common::nal::nal_units(p).map(|n| n.kind).collect();
+            let kinds: Vec<u8> = extscreen_common::nal::nal_units(p).map(|n| n.kind).collect();
             println!("frame {:>3}: {:>7} bytes in {:>6.2} ms  nals={:?}", self.frames, p.len(), ms, kinds);
             self.dump.extend_from_slice(p);
             self.packets += 1;
@@ -103,7 +103,7 @@ impl GraphicsCaptureApiHandler for Handler {
                 sorted[sorted.len() / 2],
                 sorted.last().unwrap()
             );
-            let path = std::env::temp_dir().join("xdisplay_wgc_encode.h264");
+            let path = std::env::temp_dir().join("extscreen_wgc_encode.h264");
             std::fs::write(&path, &self.dump)?;
             println!("Stream written to {}", path.display());
             control.stop();

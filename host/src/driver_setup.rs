@@ -163,7 +163,7 @@ pub fn run_cli(mode: &str, arg: Option<String>) -> i32 {
         Ok(false) => 0,
         Err(e) => {
             // The installer shows its own message; just report why on stderr.
-            eprintln!("XDisplay driver setup: {e}");
+            eprintln!("ExtScreen driver setup: {e}");
             1
         }
     }

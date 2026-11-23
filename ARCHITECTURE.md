@@ -1,6 +1,6 @@
-# XDisplay architecture
+# ExtScreen architecture
 
-XDisplay turns an Android phone or tablet into a second monitor for a Windows PC, with pen
+ExtScreen turns an Android phone or tablet into a second monitor for a Windows PC, with pen
 pressure, tilt and multi-touch sent back to Windows. This document describes how the pieces fit.
 
 ```
@@ -9,7 +9,7 @@ pressure, tilt and multi-touch sent back to Windows. This document describes how
  Virtual monitor (MttVDD indirect display driver)           Kotlin UI (ConnectActivity,
         │  Windows Graphics Capture (D3D11 texture)          MainActivity, InkOverlayView)
         ▼                                                          │ JNI
- Hardware encoder (Media Foundation MFT:                    Rust native engine (libxdisplay_client_native)
+ Hardware encoder (Media Foundation MFT:                    Rust native engine (libextscreen_client_native)
    NVENC / AMF / Quick Sync, HEVC or H.264;                   ├─ transport: TCP, auth, encryption
    OpenH264 software fallback)                                ├─ decoder: AMediaCodec → Surface
         │                                                     └─ frame pacer, LAN discovery
@@ -24,9 +24,9 @@ pressure, tilt and multi-touch sent back to Windows. This document describes how
 
 | Crate / folder | What it is |
 |---|---|
-| `common/` (`xdisplay-common`) | Wire protocol (24-byte packet header, control messages), input event formats, NAL helpers, LAN discovery format, pairing crypto (SPAKE2, ChaCha20-Poly1305). Shared by both sides. |
-| `host/` (`xdisplay-host`) | The Windows app: capture, encode, transport, input injection, dashboard and tray icon, virtual monitor management, driver installer. |
-| `client/native/` (`xdisplay-client-native`) | Android shared library in Rust: networking, handshake, decoding into the app's `Surface`. |
+| `common/` (`extscreen-common`) | Wire protocol (24-byte packet header, control messages), input event formats, NAL helpers, LAN discovery format, pairing crypto (SPAKE2, ChaCha20-Poly1305). Shared by both sides. |
+| `host/` (`extscreen-host`) | The Windows app: capture, encode, transport, input injection, dashboard and tray icon, virtual monitor management, driver installer. |
+| `client/native/` (`extscreen-client-native`) | Android shared library in Rust: networking, handshake, decoding into the app's `Surface`. |
 | `client/app/` | Android app in Kotlin: connection screen, the display activity, pen/touch capture, local predicted ink, zoom, on-screen shortcut keys. |
 | `driver/` | Display-mode list for the virtual display driver and a helper script. |
 | `installer/` | Inno Setup script and the redistributed driver packages. |
@@ -69,7 +69,7 @@ device draws a short-lived local ink trail under the pen so strokes feel immedia
 |---|---|---|
 | **USB Tethering (recommended)** | Any Android device turns on standard USB Tethering (RNDIS / USB NCM), which uses Windows' built-in inbox network driver with zero per-device setup. The host detects RNDIS/NCM adapters (`host/src/transport/usb_tether.rs`), sends direct unicast discovery beacons to the device gateway, starts at full wired USB bitrate (up to 120 Mbps), and keeps PC Wi-Fi/Ethernet at higher internet route priority via `--configure-usb-tether`. The Android app probes `rndis*`/`ncm*`/`usb*` subnets directly (`NetworkUtils.kt`, `client/native/src/discovery.rs`), auto-connects when paired, and re-discovers dynamically if Android randomizes the subnet on replug. | One-time 6-digit PIN pairing (SPAKE2), then every packet encrypted and authenticated with ChaCha20-Poly1305 |
 | Wi-Fi / LAN | The device finds PCs by UDP broadcast on port 59101, then connects over TCP 59100. | One-time 6-digit PIN pairing (SPAKE2), then every packet encrypted and authenticated with ChaCha20-Poly1305 |
-| USB accessory (optional fallback) | The host uses WinUSB to switch the device into Android Open Accessory mode and bridges the USB bulk endpoints to its local TCP server, in-process (`host/src/transport/aoa.rs`, `AoaBridge.kt`). With debugging off, `XDisplay-USB-Setup.cmd` (`scripts/usb_setup.ps1`) binds Microsoft's inbox WinUSB driver per device. | New device: the user approves it at the PC, then it gets a device secret. Known device: proves its secret (SPAKE2), and the session is unencrypted on the cable |
+| USB accessory (optional fallback) | The host uses WinUSB to switch the device into Android Open Accessory mode and bridges the USB bulk endpoints to its local TCP server, in-process (`host/src/transport/aoa.rs`, `AoaBridge.kt`). With debugging off, `ExtScreen-USB-Setup.cmd` (`scripts/usb_setup.ps1`) binds Microsoft's inbox WinUSB driver per device. | New device: the user approves it at the PC, then it gets a device secret. Known device: proves its secret (SPAKE2), and the session is unencrypted on the cable |
 | USB with adb (optional fallback) | `adb reverse tcp:59100 tcp:59100`; the host re-applies it whenever a device is attached. | Same as above; the local peer must be adb run by the same Windows user |
 
 The PIN is single-use and replaced after five wrong attempts, so it cannot be brute-forced

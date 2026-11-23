@@ -1,6 +1,6 @@
 # Third-party software
 
-XDisplay itself is licensed under the GNU General Public License v3.0 or later (see `LICENSE`).
+ExtScreen itself is licensed under the GNU General Public License v3.0 or later (see `LICENSE`).
 It includes or redistributes the following third-party components, each under its own license.
 
 ## Redistributed with the Windows installer

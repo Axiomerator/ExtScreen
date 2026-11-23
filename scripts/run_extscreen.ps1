@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    XDisplay - Universal One-Click Runner (PowerShell)
+    ExtScreen - Universal One-Click Runner (PowerShell)
 .DESCRIPTION
     Automates virtual display driver enablement, ADB reverse forwarding,
     tablet client launch, and Windows host execution with full error handling.
@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = "Continue"
 
 Write-Host "=====================================================================" -ForegroundColor Cyan
-Write-Host "          XDisplay Universal Runner & Orchestrator                   " -ForegroundColor Yellow
+Write-Host "          ExtScreen Universal Runner & Orchestrator                   " -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -59,14 +59,14 @@ if ($adbCmd) {
             Write-Host "       -> Reinstalling client APK to tablet..." -ForegroundColor Yellow
             $apkPath = Join-Path $repoRoot "client\app\build\outputs\apk\debug\app-debug.apk"
             if (Test-Path $apkPath) {
-                adb push $apkPath /data/local/tmp/xdisplay.apk | Out-Null
-                adb shell pm install -r -t /data/local/tmp/xdisplay.apk | Out-Null
+                adb push $apkPath /data/local/tmp/extscreen.apk | Out-Null
+                adb shell pm install -r -t /data/local/tmp/extscreen.apk | Out-Null
             }
         }
 
         if (-not $NoClientLaunch) {
-            Write-Host "       -> Launching XDisplay app on tablet..." -ForegroundColor Green
-            adb shell am start -n com.xdisplay/.MainActivity | Out-Null
+            Write-Host "       -> Launching ExtScreen app on tablet..." -ForegroundColor Green
+            adb shell am start -n com.extscreen/.MainActivity | Out-Null
         }
     } else {
         Write-Host "       -> [WARN] No authorized ADB device found. Ensure USB debugging is ON." -ForegroundColor Yellow
@@ -76,31 +76,31 @@ if ($adbCmd) {
 }
 
 # 3. Compile Host if needed or requested
-$hostExe = Join-Path $repoRoot "target\release\xdisplay-host.exe"
+$hostExe = Join-Path $repoRoot "target\release\extscreen-host.exe"
 if ($RebuildHost) {
     # Stop existing host process before rebuild so binary isn't locked
-    Get-Process xdisplay-host -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process extscreen-host -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 if ($RebuildHost -or (-not (Test-Path $hostExe))) {
-    Write-Host "[3/4] Building xdisplay-host (release mode)..." -ForegroundColor Yellow
+    Write-Host "[3/4] Building extscreen-host (release mode)..." -ForegroundColor Yellow
     Push-Location $repoRoot
-    cargo build --release -p xdisplay-host
+    cargo build --release -p extscreen-host
     Pop-Location
 } else {
     Write-Host "[3/4] Release binary ready ($hostExe)" -ForegroundColor Green
 }
 
 # 4. Launch Host
-$existing = Get-Process xdisplay-host -ErrorAction SilentlyContinue
+$existing = Get-Process extscreen-host -ErrorAction SilentlyContinue
 if ($existing -and (-not $RebuildHost)) {
-    Write-Host "[4/4] XDisplay Host is already running (PID: $($existing.Id))." -ForegroundColor Green
+    Write-Host "[4/4] ExtScreen Host is already running (PID: $($existing.Id))." -ForegroundColor Green
     Write-Host "       - GUI Dashboard and System Tray are active." -ForegroundColor Gray
     Write-Host "       - To restart, pass -RebuildHost or close from the system tray." -ForegroundColor Gray
     return
 }
 
-Write-Host "[4/4] Starting XDisplay Host..." -ForegroundColor Cyan
+Write-Host "[4/4] Starting ExtScreen Host..." -ForegroundColor Cyan
 Write-Host "       - GUI Dashboard and System Tray are active." -ForegroundColor Gray
 Write-Host "       - Press Ctrl+C in this console or choose Exit from the tray icon to quit." -ForegroundColor Gray
 Write-Host "=====================================================================" -ForegroundColor Cyan

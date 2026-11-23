@@ -67,6 +67,6 @@ public class DesktopLauncher {
 "@
 
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
-$binPath = Join-Path $repoRoot "target\release\xdisplay-host.exe"
+$binPath = Join-Path $repoRoot "target\release\extscreen-host.exe"
 $hostPid = [DesktopLauncher]::Launch($binPath, "winsta0\default")
-Write-Output "Launched xdisplay-host on winsta0\default with PID: $hostPid"
+Write-Output "Launched extscreen-host on winsta0\default with PID: $hostPid"

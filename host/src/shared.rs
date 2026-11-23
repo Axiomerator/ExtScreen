@@ -6,7 +6,7 @@ use crate::capture::{bitrate_for, ActiveDisplayInfo, VideoPacket};
 use crate::input::{KeyboardInjector, PointerInjector};
 use crate::stats::PipelineStats;
 use crate::transport::PairingStore;
-use xdisplay_common::protocol::VideoCodec;
+use extscreen_common::protocol::VideoCodec;
 
 /// Attaches the calling thread to the interactive `"Default"` desktop once per thread.
 /// Caching per thread avoids both kernel handle leaks and repeated syscalls on the 240 Hz

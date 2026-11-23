@@ -1,15 +1,15 @@
 [package]
-name = "xdisplay-host"
+name = "extscreen-host"
 version = "1.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "XDisplay Windows host: streams a virtual monitor to an Android tablet and injects its pen and touch input"
+description = "ExtScreen Windows host: streams a virtual monitor to an Android tablet and injects its pen and touch input"
 
 [build-dependencies]
 embed-resource = "3"
 
 [dependencies]
-xdisplay-common = { path = "../common" }
+extscreen-common = { path = "../common" }
 tokio = { version = "1.38", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"
