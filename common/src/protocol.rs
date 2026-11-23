@@ -23,6 +23,8 @@ pub mod flags {
     pub const CONFIG: u8 = 0x02;
     pub const END_OF_FRAME: u8 = 0x04;
     pub const ENCRYPTED: u8 = 0x08;
+    /// A cursor event also updates its bitmap. An empty suffix clears the previous bitmap.
+    pub const CURSOR_IMAGE: u8 = 0x10;
 }
 
 /// Fixed 24-byte header prepended to every network / USB transport packet.
@@ -94,6 +96,25 @@ pub mod cursor_shapes {
     pub const CROSS: u8 = 3;
     pub const SIZE_ALL: u8 = 4;
     pub const HIDDEN: u8 = 5;
+}
+
+pub const MAX_CURSOR_IMAGE_SIDE: u16 = 256;
+pub const CURSOR_IMAGE_HEADER_SIZE: usize = 8;
+
+/// Cursor bitmap suffix: LE u16 width, height, hotspot X and Y, then straight BGRA pixels.
+pub fn valid_cursor_image(bytes: &[u8]) -> bool {
+    let [w0, w1, h0, h1, x0, x1, y0, y1, pixels @ ..] = bytes else {
+        return false;
+    };
+    let width = u16::from_le_bytes([*w0, *w1]);
+    let height = u16::from_le_bytes([*h0, *h1]);
+    let hot_x = u16::from_le_bytes([*x0, *x1]);
+    let hot_y = u16::from_le_bytes([*y0, *y1]);
+    width <= MAX_CURSOR_IMAGE_SIDE
+        && height <= MAX_CURSOR_IMAGE_SIDE
+        && hot_x < width
+        && hot_y < height
+        && pixels.len() == usize::from(width) * usize::from(height) * 4
 }
 
 /// Decoupled 12-byte hardware cursor packet.
@@ -347,6 +368,22 @@ mod tests {
 
         hello.max_refresh_rate = 10;
         assert!(!hello.is_valid());
+    }
+
+    #[test]
+    fn cursor_bitmap_suffix_keeps_legacy_position_and_checks_length_and_hotspot() {
+        let cursor = CursorEvent::new(0.25, 0.75, cursor_shapes::ARROW, true);
+        let mut packet = cursor.to_bytes().to_vec();
+        packet.extend_from_slice(&[2, 0, 1, 0, 1, 0, 0, 0, 2, 4, 8, 128, 0, 0, 0, 0]);
+        assert_eq!(CursorEvent::from_bytes(&packet), Some(cursor));
+        let image = &mut packet[CursorEvent::SIZE..];
+        assert!(valid_cursor_image(image));
+        assert!(!valid_cursor_image(&image[..image.len() - 1]));
+        image[4] = 2;
+        assert!(!valid_cursor_image(image));
+        image[0] = 0;
+        image[1] = 2;
+        assert!(!valid_cursor_image(image));
     }
 
     #[test]

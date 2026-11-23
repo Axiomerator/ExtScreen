@@ -130,4 +130,5 @@ object NativeEngine {
     const val CURSOR_SHAPE_HIDDEN = 5
 
     external fun getCursorState(outState: FloatArray): Boolean
+    external fun getCursorImage(imageId: Int): ByteArray?
 }

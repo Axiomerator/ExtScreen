@@ -4,7 +4,7 @@ pub mod handshake;
 pub mod transport;
 
 use jni::objects::{JClass, JFloatArray, JObject, JString};
-use jni::sys::{jboolean, jfloat, jint, jlong};
+use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong};
 use jni::JNIEnv;
 use std::sync::OnceLock;
 use tracing::info;
@@ -349,16 +349,29 @@ pub extern "system" fn Java_com_extscreen_NativeEngine_getCursorState(
     _class: JClass,
     out_state: JFloatArray,
 ) -> jboolean {
-    let cursor = get_client().get_cursor_state();
+    let (cursor, image_id) = get_client().get_cursor_state_with_image();
     if cursor.visible == 0 {
         return 0;
     }
-    let data: [f32; 4] = [
+    let data = [
         cursor.norm_x,
         cursor.norm_y,
         cursor.shape_type as f32,
         cursor.visible as f32,
+        image_id as f32,
     ];
-    let _ = env.set_float_array_region(&out_state, 0, &data);
-    1
+    env.set_float_array_region(&out_state, 0, &data).is_ok() as jboolean
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_extscreen_NativeEngine_getCursorImage(
+    env: JNIEnv,
+    _class: JClass,
+    image_id: jint,
+) -> jbyteArray {
+    u16::try_from(image_id)
+        .ok()
+        .and_then(|id| get_client().get_cursor_image(id))
+        .and_then(|bytes| env.byte_array_from_slice(&bytes).ok())
+        .map_or(std::ptr::null_mut(), |bytes| bytes.into_raw())
 }

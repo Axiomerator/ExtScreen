@@ -1,3 +1,4 @@
+mod cursor_image;
 pub mod cursor_tracker;
 pub mod keyboard_injector;
 pub mod pointer_injector;

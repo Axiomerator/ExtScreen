@@ -9,9 +9,12 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
 import com.extscreen.NativeEngine.BITRATE_AUTO
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.roundToInt
 
 /**
@@ -92,12 +95,15 @@ class InkOverlayView(context: Context) : View(context) {
     }
 
     // Decoupled 120Hz Local Hardware Cursor State & Paints
-    private val cursorStateBuf = FloatArray(4)
+    private val cursorStateBuf = FloatArray(5)
     private var cursorVisible = false
     private var cursorScreenX = 0f
     private var cursorScreenY = 0f
     private var cursorShape = NativeEngine.CURSOR_SHAPE_ARROW
-    private var vsyncRunning = false
+    private data class CursorImage(val bitmap: Bitmap, val hotX: Int, val hotY: Int)
+    private var cursorImageId = 0
+    private var cursorImage: CursorImage? = null
+    private var vsyncRequested = false
     private val arrowPath = android.graphics.Path()
 
     private val cursorFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -118,13 +124,13 @@ class InkOverlayView(context: Context) : View(context) {
         color = Color.argb(90, 0, 0, 0)
     }
 
-    private val choreographerFrameCallback = object : android.view.Choreographer.FrameCallback {
+    private val choreographerFrameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (!vsyncRunning) return
+            if (!vsyncRequested || !isAttachedToWindow) return
             if (linkStatus == NativeEngine.STATUS_CONNECTED && updateCursorFromNative()) {
                 invalidate()
             }
-            android.view.Choreographer.getInstance().postFrameCallback(this)
+            Choreographer.getInstance().postFrameCallback(this)
         }
     }
 
@@ -246,6 +252,10 @@ class InkOverlayView(context: Context) : View(context) {
                 isAltLatched = false
                 isSpaceLatched = false
                 cursorVisible = false
+                cursorImageId = 0
+                cursorImage = null
+                isHovering = false
+                cachedPointers.forEach { it.active = false }
             }
         }
 
@@ -449,23 +459,27 @@ class InkOverlayView(context: Context) : View(context) {
     }
 
     fun setVsyncActive(active: Boolean) {
-        if (active == vsyncRunning) return
-        vsyncRunning = active
-        val choreographer = android.view.Choreographer.getInstance()
+        vsyncRequested = active
+        updateVsyncCallback()
+    }
+
+    private fun updateVsyncCallback() {
+        val choreographer = Choreographer.getInstance()
         choreographer.removeFrameCallback(choreographerFrameCallback)
-        if (active && isAttachedToWindow) {
+        if (vsyncRequested && isAttachedToWindow) {
             choreographer.postFrameCallback(choreographerFrameCallback)
         }
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        setVsyncActive(true)
+        // Activity.onResume() can request vsync before this view is attached on a cold launch.
+        updateVsyncCallback()
     }
 
     override fun onDetachedFromWindow() {
+        Choreographer.getInstance().removeFrameCallback(choreographerFrameCallback)
         super.onDetachedFromWindow()
-        setVsyncActive(false)
     }
 
     private fun updateCursorFromNative(): Boolean {
@@ -482,11 +496,17 @@ class InkOverlayView(context: Context) : View(context) {
         val normY = cursorStateBuf[1]
         val shape = cursorStateBuf[2].toInt()
         val vis = cursorStateBuf[3] > 0.5f
+        val imageId = cursorStateBuf[4].toInt()
+        val imageChanged = imageId != cursorImageId
+        if (imageChanged) {
+            cursorImageId = imageId
+            cursorImage = if (imageId == 0) null else loadCursorImage(imageId)
+        }
 
         val sx = (normX * width) * zoomScale + zoomPanX
         val sy = (normY * height) * zoomScale + zoomPanY
 
-        val changed = (vis != cursorVisible) || (shape != cursorShape) ||
+        val changed = imageChanged || (vis != cursorVisible) || (shape != cursorShape) ||
                 (kotlin.math.abs(sx - cursorScreenX) > 0.5f) || (kotlin.math.abs(sy - cursorScreenY) > 0.5f)
 
         cursorVisible = vis
@@ -494,6 +514,20 @@ class InkOverlayView(context: Context) : View(context) {
         cursorScreenX = sx
         cursorScreenY = sy
         return changed
+    }
+
+    private fun loadCursorImage(imageId: Int): CursorImage? {
+        // Native code validates the header and byte count before exposing the bitmap.
+        val bytes = NativeEngine.getCursorImage(imageId) ?: return null
+        val data = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val width = data.short.toInt()
+        val height = data.short.toInt()
+        val hotX = data.short.toInt()
+        val hotY = data.short.toInt()
+        val pixels = IntArray(width * height) { data.int }
+        val bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        bitmap.density = Bitmap.DENSITY_NONE
+        return CursorImage(bitmap, hotX, hotY)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -635,7 +669,7 @@ class InkOverlayView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_ENTER -> {
-                isHovering = true
+                isHovering = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
                 hoverX = x
                 hoverY = y
             }
@@ -992,7 +1026,8 @@ class InkOverlayView(context: Context) : View(context) {
             }
         }
 
-        // 2. Render live stylus hover / pressure reticle
+        // Render touch and pen feedback without a second pointer over the contact.
+        var showingTouchIndicator = isHovering
         if (isHovering) {
             cursorPaint.color = Color.argb(160, 0, 240, 255)
             cursorPaint.style = Paint.Style.STROKE
@@ -1001,7 +1036,8 @@ class InkOverlayView(context: Context) : View(context) {
         } else {
             for (i in cachedPointers.indices) {
                 val pt = cachedPointers[i]
-                if (!pt.active) continue
+                if (!pt.active || pt.toolType == MotionEvent.TOOL_TYPE_MOUSE) continue
+                showingTouchIndicator = true
                 val radius = (4f + pt.pressure * 16f) * density
                 cursorPaint.color = when (pt.toolType) {
                     MotionEvent.TOOL_TYPE_STYLUS -> colorStylus
@@ -1019,7 +1055,7 @@ class InkOverlayView(context: Context) : View(context) {
         }
 
         // 2b. Render Decoupled 120Hz Local Hardware Cursor
-        if (cursorVisible && cursorShape != NativeEngine.CURSOR_SHAPE_HIDDEN) {
+        if (!showingTouchIndicator && cursorVisible && cursorShape != NativeEngine.CURSOR_SHAPE_HIDDEN) {
             drawHardwareCursor(canvas, density)
         }
 
@@ -1426,6 +1462,10 @@ class InkOverlayView(context: Context) : View(context) {
     }
 
     private fun drawHardwareCursor(canvas: Canvas, density: Float) {
+        cursorImage?.let { image ->
+            canvas.drawBitmap(image.bitmap, cursorScreenX - image.hotX, cursorScreenY - image.hotY, null)
+            return
+        }
         when (cursorShape) {
             NativeEngine.CURSOR_SHAPE_IBEAM -> {
                 canvas.save()

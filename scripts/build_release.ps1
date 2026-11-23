@@ -40,9 +40,10 @@ if (-not $env:ANDROID_NDK_HOME) {
     if (-not $ndk) { throw "Android NDK not found (install it with the SDK manager or set ANDROID_NDK_HOME)." }
     $env:ANDROID_NDK_HOME = $ndk.FullName
 }
-$iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) { throw "Inno Setup 6 not found (winget install JRSoftware.InnoSetup)." }
+$isccCommand = Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$iscc = @($isccCommand.Source, "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+if (-not $iscc) { throw "Inno Setup 6 not found. Install it or add the directory containing ISCC.exe to PATH." }
 
 New-Item -ItemType Directory -Force $dist | Out-Null
 
@@ -56,7 +57,18 @@ Step "Android native library (arm64-v8a, armeabi-v7a, x86_64)"
 Run cargo @("ndk", "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-P", "26", "-o", "..\app\src\main\jniLibs", "build", "--release") (Join-Path $root "client\native")
 
 Step "Android APK"
-Run (Join-Path $root "client\gradlew.bat") @("assembleRelease", "--console=plain") (Join-Path $root "client")
+$previousJavaHome = $env:JAVA_HOME
+try {
+    if ($env:EXTSCREEN_JAVA_HOME) {
+        if (-not (Test-Path -LiteralPath (Join-Path $env:EXTSCREEN_JAVA_HOME "bin\java.exe") -PathType Leaf)) {
+            throw "EXTSCREEN_JAVA_HOME must point to a JDK installation."
+        }
+        $env:JAVA_HOME = $env:EXTSCREEN_JAVA_HOME
+    }
+    Run (Join-Path $root "client\gradlew.bat") @("assembleRelease", "--console=plain") (Join-Path $root "client")
+} finally {
+    $env:JAVA_HOME = $previousJavaHome
+}
 $apkDir = Join-Path $root "client\app\build\outputs\apk\release"
 $apk = @("app-release.apk", "app-release-unsigned.apk") | ForEach-Object { Join-Path $apkDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $apk) { throw "No APK produced in $apkDir" }

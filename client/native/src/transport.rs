@@ -10,7 +10,8 @@ use crate::decoder::{raise_thread_priority, supports_hardware_hevc, MediaCodecDe
 use crate::handshake::{client_handshake, HandshakeError};
 use extscreen_common::input::{actions, KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
-    flags, msg_types, ClientHello, ControlMessage, CursorEvent, PacketHeader, StreamSettingsUpdate, VideoCodec,
+    flags, msg_types, valid_cursor_image, ClientHello, ControlMessage, CursorEvent, PacketHeader,
+    StreamSettingsUpdate, VideoCodec,
     HEADER_SIZE, PROTOCOL_VERSION,
 };
 use extscreen_common::{hex, ClientId, DeviceSecret, HostId, Opener, Sealer, TAG_LEN};
@@ -51,40 +52,60 @@ unsafe impl Send for NativeWindowHolder {}
 #[cfg(target_os = "android")]
 unsafe impl Sync for NativeWindowHolder {}
 
-/// Lock-free packed cursor state so the 120–144 Hz Choreographer UI thread never contends with
-/// the video RX thread. Layout: 24-bit X | 24-bit Y | 8-bit shape | 8-bit visible.
+/// Keep the per-vsync cursor position lock-free. Only a shape change touches the image mutex.
 #[derive(Default)]
-struct AtomicCursorState(AtomicU64);
+struct AtomicCursorState {
+    // 16-bit X and Y (less than 0.1 pixel at 4K), 8-bit shape and visibility, and a 16-bit image ID.
+    position: AtomicU64,
+    image: Mutex<(u16, Vec<u8>)>,
+}
 
 impl AtomicCursorState {
-    const SCALE: f32 = 16_777_215.0; // (1 << 24) - 1
+    const SCALE: f32 = u16::MAX as f32;
 
-    fn pack(c: CursorEvent) -> u64 {
-        let nx = if c.norm_x.is_finite() { c.norm_x.clamp(0.0, 1.0) } else { 0.0 };
-        let ny = if c.norm_y.is_finite() { c.norm_y.clamp(0.0, 1.0) } else { 0.0 };
-        let qx = (nx * Self::SCALE).round() as u64 & 0x00FF_FFFF;
-        let qy = (ny * Self::SCALE).round() as u64 & 0x00FF_FFFF;
-        qx | (qy << 24) | ((c.shape_type as u64) << 48) | ((c.visible as u64) << 56)
+    fn store(&self, event: CursorEvent, image_id: u16) {
+        fn coord(value: f32) -> u64 {
+            if value.is_finite() {
+                (value.clamp(0.0, 1.0) * AtomicCursorState::SCALE).round() as u64
+            } else {
+                0
+            }
+        }
+        let packed = coord(event.norm_x)
+            | (coord(event.norm_y) << 16)
+            | (u64::from(event.shape_type) << 32)
+            | (u64::from(event.visible) << 40)
+            | (u64::from(image_id) << 48);
+        self.position.store(packed, Ordering::Release);
     }
 
-    fn unpack(raw: u64) -> CursorEvent {
-        let qx = (raw & 0x00FF_FFFF) as f32 / Self::SCALE;
-        let qy = ((raw >> 24) & 0x00FF_FFFF) as f32 / Self::SCALE;
-        let shape_type = ((raw >> 48) & 0xFF) as u8;
-        let visible = ((raw >> 56) & 0xFF) as u8;
-        CursorEvent::new(qx, qy, shape_type, visible != 0)
+    fn load(&self) -> (CursorEvent, u16) {
+        let raw = self.position.load(Ordering::Acquire);
+        let x = raw as u16 as f32 / Self::SCALE;
+        let y = (raw >> 16) as u16 as f32 / Self::SCALE;
+        let shape = (raw >> 32) as u8;
+        let visible = (raw >> 40) as u8 != 0;
+        (CursorEvent::new(x, y, shape, visible), (raw >> 48) as u16)
     }
 
-    fn store(&self, c: CursorEvent) {
-        self.0.store(Self::pack(c), Ordering::Relaxed);
+    fn replace_image(&self, bytes: &[u8]) -> u16 {
+        let mut image = self.image.lock().unwrap_or_else(|e| e.into_inner());
+        image.1.clear();
+        if !valid_cursor_image(bytes) {
+            return 0;
+        }
+        image.0 = image.0.wrapping_add(1).max(1);
+        image.1.extend_from_slice(bytes);
+        image.0
     }
 
-    fn load(&self) -> CursorEvent {
-        Self::unpack(self.0.load(Ordering::Relaxed))
+    fn image(&self, id: u16) -> Option<Vec<u8>> {
+        let image = self.image.lock().unwrap_or_else(|e| e.into_inner());
+        (id != 0 && id == image.0 && !image.1.is_empty()).then(|| image.1.clone())
     }
 
     fn hide(&self) {
-        self.0.store(0, Ordering::Relaxed);
+        self.position.store(0, Ordering::Release);
     }
 }
 
@@ -526,7 +547,15 @@ impl TransportClient {
     }
 
     pub fn get_cursor_state(&self) -> CursorEvent {
+        self.get_cursor_state_with_image().0
+    }
+
+    pub(crate) fn get_cursor_state_with_image(&self) -> (CursorEvent, u16) {
         self.cursor_state.load()
+    }
+
+    pub fn get_cursor_image(&self, id: u16) -> Option<Vec<u8>> {
+        self.cursor_state.image(id)
     }
 
     pub fn queue_pointer_event(&self, event: PointerEvent) {
@@ -833,6 +862,7 @@ impl Link {
                 let mut payload: Vec<u8> = vec![0u8; 512 * 1024];
                 let mut jitter = ArrivalJitter::default();
                 let mut jitter_logged = Instant::now();
+                let mut cursor_image_id = 0;
                 while rx_running.load(Ordering::Relaxed) {
                     if let Err(e) = read_stream.read_exact(&mut header_buf) {
                         log::warn!("Video Rx stream disconnected: {}", e);
@@ -934,7 +964,10 @@ impl Link {
                         }
                     } else if pkt_hdr.msg_type == msg_types::CURSOR_EVENT {
                         if let Some(cursor) = CursorEvent::from_bytes(body) {
-                            rx_cursor.store(cursor);
+                            if pkt_hdr.flags & flags::CURSOR_IMAGE != 0 {
+                                cursor_image_id = rx_cursor.replace_image(&body[CursorEvent::SIZE..]);
+                            }
+                            rx_cursor.store(cursor, cursor_image_id);
                         }
                     } else if pkt_hdr.msg_type == msg_types::CONTROL {
                         if let Ok(ctrl) = bincode::deserialize::<ControlMessage>(body) {
@@ -1160,24 +1193,40 @@ mod tests {
     #[test]
     fn atomic_cursor_state_roundtrips_with_subpixel_precision() {
         let state = AtomicCursorState::default();
-        assert_eq!(state.load().visible, 0);
+        assert_eq!(state.load().0.visible, 0);
 
         let evt = CursorEvent::new(0.731_25, 0.418_945, 2, true);
-        state.store(evt);
-        let got = state.load();
+        state.store(evt, 9);
+        let (got, image_id) = state.load();
+        assert_eq!(image_id, 9);
         assert_eq!(got.visible, 1);
         assert_eq!(got.shape_type, 2);
-        assert!((got.norm_x - evt.norm_x).abs() < 1e-6, "{} vs {}", got.norm_x, evt.norm_x);
-        assert!((got.norm_y - evt.norm_y).abs() < 1e-6, "{} vs {}", got.norm_y, evt.norm_y);
+        assert!((got.norm_x - evt.norm_x).abs() < 1e-5);
+        assert!((got.norm_y - evt.norm_y).abs() < 1e-5);
 
-        // Non-finite inputs clamp cleanly instead of producing NaN bit patterns.
-        state.store(CursorEvent::new(f32::NAN, f32::INFINITY, 1, true));
-        let clean = state.load();
+        state.store(CursorEvent::new(f32::NAN, f32::INFINITY, 1, true), 0);
+        let (clean, _) = state.load();
         assert_eq!(clean.norm_x, 0.0);
         assert_eq!(clean.norm_y, 0.0);
 
         state.hide();
-        assert_eq!(state.load().visible, 0);
+        assert_eq!(state.load().0.visible, 0);
+        assert_eq!(state.load().1, 0);
+    }
+
+    #[test]
+    fn cursor_image_changes_can_be_read_by_id_and_cleared() {
+        let state = AtomicCursorState::default();
+        let first = [1, 0, 1, 0, 0, 0, 0, 0, 2, 4, 8, 128];
+        let second = [1, 0, 1, 0, 0, 0, 0, 0, 8, 4, 2, 255];
+        let first_id = state.replace_image(&first);
+        assert_eq!(state.image(first_id).as_deref(), Some(first.as_slice()));
+        let second_id = state.replace_image(&second);
+        assert_ne!(first_id, second_id);
+        assert!(state.image(first_id).is_none());
+        assert_eq!(state.image(second_id).as_deref(), Some(second.as_slice()));
+        assert_eq!(state.replace_image(&[]), 0);
+        assert!(state.image(second_id).is_none());
     }
 
     #[test]

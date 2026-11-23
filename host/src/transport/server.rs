@@ -15,11 +15,11 @@ use super::handshake::host_handshake;
 use super::usb_tether;
 use crate::capture::rate_control::{Link, MIN_KBPS};
 use crate::capture::{find_virtual_display, monitor_rect, virtual_display, VideoPacket};
-use crate::input::spawn_cursor_tracker;
+use crate::input::{cursor_tracker::CursorSample, spawn_cursor_tracker};
 use crate::shared::{HighResTimerGuard, HostShared, LinkKind, SessionInfo};
 use extscreen_common::input::{KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
-    flags, msg_types, ClientHello, ControlMessage, CursorEvent, PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO,
+    flags, msg_types, ClientHello, ControlMessage, PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO,
     HEADER_SIZE,
 };
 use extscreen_common::DeviceSecret;
@@ -378,7 +378,7 @@ async fn run_session(
 
     // Latest-only watch channel for decoupled hardware cursor updates: stale positions are
     // overwritten in place rather than piling up in a FIFO queue during brief link stalls.
-    let (cursor_tx, cursor_rx) = watch::channel::<Option<CursorEvent>>(None);
+    let (cursor_tx, cursor_rx) = watch::channel::<Option<CursorSample>>(None);
 
     let _cursor_task = AbortOnDrop(spawn_cursor_tracker(shared.clone(), cursor_tx));
     let mut rx_task = AbortOnDrop(tokio::spawn(receive_loop(reader, shared.clone(), ctrl_tx, hello, new_secret, link_kind)));
@@ -631,10 +631,12 @@ async fn send_loop(
     shared: Arc<HostShared>,
     video_rx: Arc<Mutex<mpsc::Receiver<VideoPacket>>>,
     mut ctrl_rx: mpsc::Receiver<ControlMessage>,
-    mut cursor_rx: watch::Receiver<Option<CursorEvent>>,
+    mut cursor_rx: watch::Receiver<Option<CursorSample>>,
 ) {
     let mut frame_seq = 0u32;
     let mut cursor_seq = 0u32;
+    let mut sent_cursor_image: Option<Arc<Vec<u8>>> = None;
+    let mut cursor_with_image = Vec::new();
     let mut ctrl_seq = 0u32;
     let mut video_rx = video_rx.lock_owned().await;
 
@@ -694,20 +696,36 @@ async fn send_loop(
 
             // Priority 2: Decoupled Hardware Cursor Updates (latest-only, zero queue lag)
             Ok(()) = cursor_rx.changed() => {
-                let Some(cursor_evt) = *cursor_rx.borrow_and_update() else {
+                let Some(sample) = cursor_rx.borrow_and_update().clone() else {
                     continue;
                 };
-                let payload = cursor_evt.to_bytes();
+                let position = sample.event.to_bytes();
+                let image_changed = match (&sent_cursor_image, &sample.image) {
+                    (Some(sent), Some(current)) => !Arc::ptr_eq(sent, current),
+                    (None, None) => false,
+                    _ => true,
+                };
+                let (flag, payload): (_, &[u8]) = if image_changed {
+                    cursor_with_image.clear();
+                    cursor_with_image.extend_from_slice(&position);
+                    if let Some(image) = &sample.image {
+                        cursor_with_image.extend_from_slice(image);
+                    }
+                    sent_cursor_image = sample.image;
+                    (flags::CURSOR_IMAGE, &cursor_with_image)
+                } else {
+                    (flags::NONE, &position)
+                };
                 let hdr = PacketHeader::new(
                     msg_types::CURSOR_EVENT,
-                    flags::NONE,
+                    flag,
                     0,
                     cursor_seq,
                     payload.len() as u32,
                     0,
                 );
                 cursor_seq = cursor_seq.wrapping_add(1);
-                if let Err(e) = writer.send(hdr, &payload).await {
+                if let Err(e) = writer.send(hdr, payload).await {
                     warn!("Error writing cursor packet: {}", e);
                     break;
                 }

@@ -4,11 +4,19 @@ use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::info;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorInfo, LoadCursorW, CURSORINFO, CURSOR_SHOWING, IDC_CROSS, IDC_HAND, IDC_IBEAM,
-    IDC_SIZEALL,
+    GetCursorInfo, LoadCursorW, CURSORINFO, CURSOR_SHOWING, CURSOR_SUPPRESSED, HCURSOR, IDC_CROSS,
+    IDC_HAND, IDC_IBEAM, IDC_SIZEALL,
 };
 use extscreen_common::protocol::{cursor_shapes, CursorEvent};
 use crate::shared::HostShared;
+
+use super::cursor_image::cursor_image;
+
+#[derive(Clone)]
+pub struct CursorSample {
+    pub event: CursorEvent,
+    pub image: Option<Arc<Vec<u8>>>,
+}
 
 /// How often the tablet monitor's position is re-read (see `HostShared::refresh_display_geometry`).
 const GEOMETRY_REFRESH: Duration = Duration::from_millis(500);
@@ -19,7 +27,7 @@ const GEOMETRY_REFRESH: Duration = Duration::from_millis(500);
 /// cursor samples can never queue up behind video traffic.
 pub fn spawn_cursor_tracker(
     shared: Arc<HostShared>,
-    cursor_tx: watch::Sender<Option<CursorEvent>>,
+    cursor_tx: watch::Sender<Option<CursorSample>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         crate::shared::attach_to_default_desktop();
@@ -30,6 +38,8 @@ pub fn spawn_cursor_tracker(
 
         let mut was_on_screen = false;
         let mut last_event: Option<CursorEvent> = None;
+        let mut image_cursor = HCURSOR::default();
+        let mut image = None;
         let mut geometry_checked = Instant::now();
         let mut next_tick = Instant::now();
 
@@ -65,7 +75,8 @@ pub fn spawn_cursor_tracker(
                 continue;
             }
 
-            let visible = (ci.flags.0 & CURSOR_SHOWING.0) != 0;
+            let visible = (ci.flags.0 & CURSOR_SHOWING.0) != 0
+                && (ci.flags.0 & CURSOR_SUPPRESSED.0) == 0;
             let pt = ci.ptScreenPos;
 
             if geometry_checked.elapsed() >= GEOMETRY_REFRESH {
@@ -102,15 +113,20 @@ pub fn spawn_cursor_tracker(
                     cursor_shapes::ARROW
                 };
 
+                let image_changed = visible && ci.hCursor != image_cursor;
+                if image_changed {
+                    image_cursor = ci.hCursor;
+                    image = cursor_image(image_cursor).map(Arc::new);
+                }
                 let evt = CursorEvent::new(norm_x, norm_y, shape, visible);
-                if last_event != Some(evt) {
-                    cursor_tx.send_replace(Some(evt));
+                if last_event != Some(evt) || image_changed {
+                    cursor_tx.send_replace(Some(CursorSample { event: evt, image: image.clone() }));
                     last_event = Some(evt);
                     was_on_screen = true;
                 }
             } else if was_on_screen {
                 let hide_evt = CursorEvent::new(0.0, 0.0, cursor_shapes::HIDDEN, false);
-                cursor_tx.send_replace(Some(hide_evt));
+                cursor_tx.send_replace(Some(CursorSample { event: hide_evt, image: image.clone() }));
                 was_on_screen = false;
                 last_event = None;
             }

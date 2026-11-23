@@ -1,23 +1,23 @@
-# Virtual display driver
+# 虚拟显示驱动
 
-ExtScreen uses the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
-(MttVDD, MIT licensed, Microsoft-signed) to give Windows a real extra monitor. The signed x64 driver
-package is redistributed in `installer/redist/vdd/` and installed by the Windows installer.
+ExtScreen 使用开源的 [Virtual Display Driver（MttVDD）](https://github.com/VirtualDrivers/Virtual-Display-Driver)在 Windows 上创建独立的扩展显示器。项目附带按 MIT 授权并经 Microsoft 签名的 x64 驱动包，位于 `installer/redist/vdd/`，由 Windows 安装器安装。
 
-| File | Purpose |
-|---|---|
-| `vdd_settings.xml` | The display modes the driver offers: common phone, tablet and foldable resolutions in landscape (16:9, 16:10, 5:3, 3:2, 7:5, 4:3, 18:9 to 21:9), each at 60, 75, 90, 120 and 144 Hz. The installer copies it to `C:\VirtualDisplayDriver` and points the driver at it (`HKLM\SOFTWARE\MikeTheTech\VirtualDisplayDriver\VDDPATH`). |
-| `enable_virtual_display.ps1` | For source checkouts: installs/restarts the driver and applies the mode list (run as administrator). |
+| 文件 | 用途 |
+| --- | --- |
+| `vdd_settings.xml` | 声明横屏分辨率，涵盖常见手机、平板和折叠屏比例，并提供 60、75、90、120、144 Hz 的刷新率。安装器将配置复制到 `C:\VirtualDisplayDriver`，通过 `HKLM\SOFTWARE\MikeTheTech\VirtualDisplayDriver` 的 `VDDPATH` 值指定目录。 |
+| `enable_virtual_display.ps1` | 从源码运行时，用管理员权限安装或重启驱动，并应用分辨率配置。 |
 
-The host attaches the monitor only while a device is connected, at the device's own resolution
-when it is in the list (otherwise the closest shape), and detaches it afterwards. To add a
-resolution, add a `<resolution>` entry (landscape, width >= height) and reinstall or restart the
-driver.
+安卓设备连接时，主机会启用虚拟屏。模式列表包含设备原生分辨率时优先使用它，否则选择尺寸接近的模式。设备断开后，主机将虚拟屏从桌面布局中移除。
 
-The host can also manage the driver directly (administrator rights needed):
+如需增加分辨率，在 XML 中新增横屏的 `<resolution>` 项，确保宽度大于或等于高度，再让驱动重新加载配置。
+
+也可以在仓库根目录打开管理员 PowerShell，通过已构建的主机程序管理驱动。
 
 ```powershell
-extscreen-host.exe --install-display-driver path\to\MttVDD.inf   # exit 0, or 3010 = restart needed
-extscreen-host.exe --query-display-driver                        # exit 0 when the device exists
-extscreen-host.exe --uninstall-display-driver
+$hostExe = '.\target\release\extscreen-host.exe'
+& $hostExe --install-display-driver '.\installer\redist\vdd\MttVDD.inf'
+& $hostExe --query-display-driver
+& $hostExe --uninstall-display-driver
 ```
+
+安装命令返回 `0` 表示成功，返回 `3010` 表示需要重启后完成安装。查询命令在找到驱动设备时返回 `0`。
