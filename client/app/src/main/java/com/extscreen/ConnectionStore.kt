@@ -14,13 +14,6 @@ data class Target(
     /** Direct USB goes through `adb reverse` or AOA bridge, which arrives on loopback. */
     val isUsb: Boolean get() = host == USB_HOST
 
-    val label: String
-        get() = when {
-            isUsb -> "USB"
-            isUsbTether -> "$name (USB Tethering)"
-            else -> "$name ($host)"
-        }
-
     companion object {
         const val USB_HOST = "127.0.0.1"
         const val DEFAULT_PORT = 59100

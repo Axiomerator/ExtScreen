@@ -68,5 +68,13 @@ public class DesktopLauncher {
 
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $binPath = Join-Path $repoRoot "target\release\extscreen-host.exe"
-$hostPid = [DesktopLauncher]::Launch($binPath, "winsta0\default")
+$previousDashboardPath = $env:EXTSCREEN_DASHBOARD_PATH
+if (-not $previousDashboardPath) {
+    $env:EXTSCREEN_DASHBOARD_PATH = Join-Path $repoRoot 'ui\build\windows\x64\runner\Release\extscreen.exe'
+}
+try {
+    $hostPid = [DesktopLauncher]::Launch($binPath, "winsta0\default")
+} finally {
+    $env:EXTSCREEN_DASHBOARD_PATH = $previousDashboardPath
+}
 Write-Output "Launched extscreen-host on winsta0\default with PID: $hostPid"

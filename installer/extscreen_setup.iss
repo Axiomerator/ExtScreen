@@ -2,7 +2,8 @@
 ; ExtScreen installer (Inno Setup 6)
 ;
 ; Installs everything the Windows side needs, with no other downloads:
-;   - extscreen-host.exe (dashboard + tray app that streams to the phone/tablet)
+;   - extscreen.exe (Flutter / Prism UI dashboard and its runtime)
+;   - extscreen-host.exe (tray and Windows streaming host)
 ;   - the virtual display driver (MttVDD, MIT licensed) that gives Windows a real second monitor
 ;   - one-time Windows Firewall & route-priority setup so USB Tethering works automatically for
 ;     every Android device (no USB debugging, no per-device driver override) plus Wi-Fi
@@ -12,18 +13,25 @@
 ;   - the Android app (APK) for copying to a device
 ;
 ; Build: scripts\build_release.ps1 (or ISCC.exe installer\extscreen_setup.iss after building
-; the host and the release APK).
+; the host, Windows dashboard and release APK).
 ; ==============================================================================
 
 #define MyAppName "ExtScreen"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.2.0"
 #endif
 #define MyAppPublisher "ExtScreen contributors"
 #define MyAppURL "https://github.com/Axiomerator/ExtScreen"
 #define MyAppExeName "extscreen-host.exe"
+#define DashboardExeName "extscreen.exe"
+#ifndef DashboardDir
+  #define DashboardDir "..\ui\build\windows\x64\runner\Release"
+#endif
 #ifndef HostExe
   #define HostExe "..\target\release\extscreen-host.exe"
+#endif
+#ifndef AndroidApk
+  #define AndroidApk "..\dist\ExtScreen-" + MyAppVersion + ".apk"
 #endif
 #define VddDir "{sd}\VirtualDisplayDriver"
 
@@ -50,7 +58,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.18362
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\{#DashboardExeName}
 UninstallDisplayName={#MyAppName}
 VersionInfoVersion={#MyAppVersion}
 VersionInfoDescription={#MyAppName} installer
@@ -69,6 +77,7 @@ Name: "removeusbdk"; Description: "Remove the detected UsbDk USB driver (recomme
 
 [Files]
 Source: "{#HostExe}"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "{#DashboardDir}\*"; DestDir: "{app}"; Excludes: "*.pdb,extscreen-host.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Virtual display driver package and its display modes
 Source: "redist\vdd\*"; DestDir: "{app}\driver\vdd"; Flags: ignoreversion
 Source: "..\driver\vdd_settings.xml"; DestDir: "{#VddDir}"; Flags: ignoreversion
@@ -81,12 +90,13 @@ Source: "..\scripts\try_wifi.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversio
 Source: "..\scripts\usb_setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\ExtScreen-USB-Setup.cmd"; DestDir: "{app}"; Flags: ignoreversion
 ; Android app, for copying to a phone or tablet
-Source: "..\dist\ExtScreen-{#MyAppVersion}.apk"; DestDir: "{app}\android"; DestName: "ExtScreen.apk"; Flags: ignoreversion
+Source: "{#AndroidApk}"; DestDir: "{app}\android"; DestName: "ExtScreen.apk"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#DashboardExeName}"
 Name: "{group}\USB Tethering & Wi-Fi setup"; Filename: "{app}\ExtScreen-USB-Tethering-Setup.cmd"; WorkingDir: "{app}"; Comment: "Re-apply firewall and USB Tethering route priority"
 Name: "{group}\Network troubleshooter"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -NoExit -File ""{app}\scripts\try_wifi.ps1"""
 Name: "{group}\Legacy USB AOA setup"; Filename: "{app}\ExtScreen-USB-Setup.cmd"; WorkingDir: "{app}"; Comment: "Optional per-device WinUSB setup (not needed for USB Tethering)"
@@ -94,7 +104,7 @@ Name: "{group}\Undo legacy USB AOA setup"; Filename: "{app}\ExtScreen-USB-Setup.
 Name: "{group}\Android app (APK)"; Filename: "{app}\android"
 Name: "{group}\Log files"; Filename: "{localappdata}\ExtScreen\logs"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#DashboardExeName}"; Tasks: desktopicon
 
 [Dirs]
 Name: "{localappdata}\ExtScreen\logs"
@@ -122,9 +132,10 @@ Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""ExtScre
 Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""ExtScreen Host (Wi-Fi UDP)"" dir=in action=allow program=""{app}\{#MyAppExeName}"" protocol=UDP profile=private,domain remoteip=localsubnet"; Flags: runhidden; Tasks: firewall
 ; Keep PC Wi-Fi/Ethernet as the primary internet route when any Android USB Tethering adapter connects.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\setup_usb_tethering.ps1"" -HostExe ""{app}\{#MyAppExeName}"" -TaskOnly -Quiet"; Flags: runhidden; Tasks: usbtetherroute; StatusMsg: "Configuring USB Tethering route priority..."
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\{#DashboardExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
+Filename: "taskkill.exe"; Parameters: "/IM {#DashboardExeName} /F"; Flags: runhidden; RunOnceId: "StopDashboard"
 Filename: "taskkill.exe"; Parameters: "/IM {#MyAppExeName} /F"; Flags: runhidden; RunOnceId: "StopHost"
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--detach-display-if-host-absent"; Flags: runhidden; RunOnceId: "DetachDisplay"
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--remove-watchdog"; Flags: runhidden; RunOnceId: "StopWatchdog"
@@ -203,6 +214,7 @@ var
   Existing: String;
 begin
   Result := '';
+  Exec('taskkill.exe', '/IM {#DashboardExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Existing := ExpandConstant('{app}\{#MyAppExeName}');
   if FileExists(Existing) then

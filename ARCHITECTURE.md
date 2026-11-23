@@ -10,6 +10,7 @@ flowchart LR
         Encode --> Server["Tokio 传输服务<br/>默认 TCP 59100"]
         Cursor["光标采样"] --> Server
         Server --> Inject["笔、触控与按键注入"]
+        Dashboard["Prism UI 控制面板"] <-->|"本机命名管道"| Server
     end
     subgraph Android["安卓设备"]
         Link["Rust 原生引擎<br/>连接与解包"]
@@ -17,6 +18,7 @@ flowchart LR
         Decode --> Surface["SurfaceView 显示画面"]
         Link --> Overlay["InkOverlayView 绘制光标"]
         Overlay --> Link
+        Controls["Prism UI 连接与浮层"] <-->|"平台通道"| Overlay
     end
     Server -->|"USB 或局域网 · 视频和光标"| Link
     Link -->|"笔、触控和按键"| Server
@@ -27,11 +29,20 @@ flowchart LR
 | 目录或组件 | 职责 |
 | --- | --- |
 | `common/`（`extscreen-common`） | 定义 24 字节包头、控制消息、输入事件、NAL 辅助函数、局域网发现格式和配对算法。 |
-| `host/`（`extscreen-host`） | 采集、编码和传输画面，注入输入事件，管理托盘、控制面板和虚拟显示器。 |
+| `host/`（`extscreen-host`） | 采集、编码和传输画面，注入输入事件，管理托盘、虚拟显示器和控制面板接口。 |
+| `ui/` | Flutter + Prism UI 框架。包含 Windows 控制面板、安卓连接与设置页、串流浮层和中英文/主题设置。 |
 | `client/native/`（`extscreen-client-native`） | Rust 安卓原生库，处理连接、握手和解码，把画面送到应用的 `Surface`。 |
-| `client/app/` | Kotlin 层，负责连接界面、显示、触控和笔输入采样、笔迹预绘、缩放及快捷栏。 |
+| `client/app/` | Kotlin 安卓宿主，负责 USB 与网络发现、视频 Surface、触控和笔输入采样、笔迹预绘，以及连接 Flutter 界面的平台通道。 |
 | `driver/` | 虚拟显示驱动的显示模式与配置脚本。 |
-| `installer/` | Inno Setup 打包脚本与随安装器分发的驱动。 |
+| `installer/` | 可选 Inno 安装器脚本及随 Windows 便携 ZIP 分发的驱动原件。 |
+
+## 界面与原生引擎
+
+Windows 控制面板 `extscreen.exe` 与 Rust 主机 `extscreen-host.exe` 分别运行，通过本机同用户命名管道传递状态和操作。关闭控制面板窗口后仍可从托盘打开。首次 USB 直连时，主机在控制面板发出确认请求，关闭或隐藏提示以及超时都会拒绝本次配对。
+
+Windows runner 按每显示器 DPI 缩放，换屏时采用系统建议的窗口边界。显示器矩形和输入注入仍使用物理像素坐标。
+
+安卓端由 Kotlin 管理视频 `SurfaceView`、光标、笔迹和触控。Flutter 通过平台通道读取状态并提交设置。悬浮层接收控件范围内的触摸，其余触摸沿用原生输入路径。
 
 ## 视频数据流
 

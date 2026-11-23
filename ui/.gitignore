@@ -1,0 +1,7 @@
+/.dart_tool/
+/.fvm/
+/.flutter-plugins-dependencies
+/build/
+/windows/flutter/ephemeral/
+/windows/flutter/generated_plugin_registrant.*
+/windows/flutter/generated_plugins.cmake

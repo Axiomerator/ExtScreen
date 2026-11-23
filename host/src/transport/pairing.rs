@@ -34,7 +34,7 @@ pub const USB_APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 const USB_DENIAL_MEMORY: Duration = Duration::from_secs(60);
 
 /// Asks the user whether a new USB tablet (by name) may control this PC. Blocking; returns
-/// `true` only on an explicit yes. Production uses a dialog (`gui::usb_approval_prompt`).
+/// `true` only on an explicit yes. Production asks for consent in the Windows dashboard.
 pub type UsbApprover = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Outcome of asking to admit a new USB tablet.
@@ -179,7 +179,7 @@ impl PairingStore {
         let name = sanitize_name(name);
         info!("Asking the user to approve new USB tablet '{name}'");
         let ask_name = name.clone();
-        // The prompt itself times out (see `gui::usb_approval_prompt`); this is the backstop.
+        // The dashboard prompt has its own timeout; this also bounds the approval callback.
         let answer = tokio::time::timeout(
             USB_APPROVAL_TIMEOUT + Duration::from_secs(5),
             tokio::task::spawn_blocking(move || approver(&ask_name)),

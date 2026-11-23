@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
+import android.graphics.RectF
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.util.Log
@@ -21,34 +22,36 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.Toast
 import androidx.core.content.ContextCompat
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
 
-enum class PressureCurve(val label: String, val gamma: Float) {
-    LINEAR("LINEAR", 1.0f),
-    SOFT("SOFT", 0.65f),
-    FIRM("FIRM", 1.35f),
-    HARD("HARD", 1.8f)
+enum class PressureCurve(val gamma: Float) {
+    LINEAR(1.0f), SOFT(0.65f), FIRM(1.35f), HARD(1.8f)
 }
 
-enum class BarrelButtonMapping(val label: String) {
-    RIGHT_CLICK("R-CLICK"),
-    ERASER("ERASER")
-}
+enum class BarrelButtonMapping { RIGHT_CLICK, ERASER }
 
-enum class TouchMode(val label: String) {
-    ALL_TOUCH("ALL TOUCH"),
-    PEN_ONLY("PEN ONLY"),
-    TWO_FINGER_SCROLL("2F SCROLL")
-}
+enum class TouchMode { ALL_TOUCH, PEN_ONLY, TWO_FINGER_SCROLL }
 
 class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, View.OnGenericMotionListener {
     private lateinit var surfaceView: SurfaceView
     private lateinit var inkOverlayView: InkOverlayView
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var controlsView: StreamControlsView
+    private lateinit var controlsEngine: FlutterEngine
+    private var ui: AndroidUiChannel? = null
+    private var appearance: AppearanceChannel? = null
+    private var diagnostics = false
+    private var minimap = true
+    private var shortcuts = false
+    private val heldKeys = mutableSetOf<Int>()
+    private var lastLinkStatus = NativeEngine.STATUS_DISCONNECTED
 
     private lateinit var store: ConnectionStore
     private var target: Target = Target.USB
@@ -81,7 +84,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             // PC's monitor must not be switched back and forth for that.
             if (reportedFps in 1 until now) {
                 reportedFps = now
-                NativeEngine.updateStreamSettings(now, 0)
+                if (customFps == null) NativeEngine.updateStreamSettings(now, 0)
             }
         }
     }
@@ -103,38 +106,166 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     private var panY = 0f
     private var pinchZoomEnabled = true
 
-    // Pen & Touch settings (Feature #3, #2, #4, #10)
+    // Pen, touch and stream settings.
     private var touchMode = TouchMode.ALL_TOUCH
     private var penOnlyMode = false
     private var currentPressureCurve = PressureCurve.LINEAR
     private var barrelMapping = BarrelButtonMapping.RIGHT_CLICK
     private var inkMode = InkOverlayView.InkMode.FADE
     private var scrollPrevY = 0f
-    private var currentFps = 120
+    private var customFps: Int? = null
     private var currentBitrateKbps = NativeEngine.BITRATE_AUTO
 
-    private fun setPressureCurve(curve: PressureCurve) {
-        currentPressureCurve = curve
-        inkOverlayView.pressureCurveName = curve.label
+    private fun streamState(): Map<String, Any?> {
+        val width = surfaceView.width.coerceAtLeast(1)
+        val height = surfaceView.height.coerceAtLeast(1)
+        val left = -panX / (width * zoomScale)
+        val top = -panY / (height * zoomScale)
+        return mapOf(
+            "status" to lastLinkStatus,
+            "peerName" to NativeEngine.getHostName().ifEmpty { target.name },
+            "usbTether" to target.isUsbTether,
+            "directUsb" to target.isUsb,
+            "estimatedWidth" to surfaceView.width,
+            "estimatedHeight" to surfaceView.height,
+            "fps" to (customFps ?: reportedFps.takeIf { it > 0 } ?: panelFps.toInt()),
+            "maxFps" to panelFps.toInt(),
+            "bitrateKbps" to currentBitrateKbps,
+            "rttUs" to if (diagnostics) NativeEngine.getRoundTripLatencyUs() else 0L,
+            "packetsSent" to if (diagnostics) NativeEngine.getSentPacketsCount() else 0L,
+            "touchMode" to touchMode.name,
+            "pressureCurve" to currentPressureCurve.name,
+            "barrelMapping" to barrelMapping.name,
+            "inkMode" to inkMode.name,
+            "pinchZoom" to pinchZoomEnabled,
+            "diagnostics" to diagnostics,
+            "minimap" to minimap,
+            "shortcuts" to shortcuts,
+            "heldKeys" to heldKeys.toList(),
+            "viewport" to mapOf(
+                "scale" to zoomScale,
+                "left" to left.coerceIn(0f, 1f),
+                "top" to top.coerceIn(0f, 1f),
+                "right" to (left + 1f / zoomScale).coerceIn(0f, 1f),
+                "bottom" to (top + 1f / zoomScale).coerceIn(0f, 1f)
+            ),
+            "diagnosticData" to if (diagnostics) mapOf(
+                "toolType" to inkOverlayView.lastToolType,
+                "pressure" to inkOverlayView.lastPressure,
+                "tiltX" to inkOverlayView.lastTiltX,
+                "tiltY" to inkOverlayView.lastTiltY,
+                "sampleRateHz" to inkOverlayView.sampleRateHz
+            ) else null
+        )
     }
 
-    private fun cyclePressureCurve(): String {
-        val values = PressureCurve.values()
-        currentPressureCurve = values[(currentPressureCurve.ordinal + 1) % values.size]
-        return currentPressureCurve.label
+    private fun handleUiCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "getStreamState" -> result.success(streamState())
+            "setStreamOptions" -> {
+                setStreamOptions(call)
+                ui?.publish()
+                result.success(streamState())
+            }
+            "streamHitAreas" -> {
+                val regions = call.argument<List<Map<String, Number>>>("rects").orEmpty().mapNotNull { r ->
+                    val left = r["left"]?.toFloat() ?: return@mapNotNull null
+                    val top = r["top"]?.toFloat() ?: return@mapNotNull null
+                    val right = r["right"]?.toFloat() ?: return@mapNotNull null
+                    val bottom = r["bottom"]?.toFloat() ?: return@mapNotNull null
+                    if (left < right && top < bottom) RectF(left, top, right, bottom) else null
+                }
+                controlsView.setHitAreas(call.argument<Boolean>("modal") == true, regions)
+                result.success(null)
+            }
+            "resetZoom" -> {
+                resetZoom()
+                result.success(streamState())
+            }
+            "clearInk" -> {
+                inkOverlayView.clearCanvas()
+                result.success(null)
+            }
+            "sendKey" -> {
+                val key = call.argument<Int>("code")
+                val action = call.argument<Int>("action")
+                val modifiers = call.argument<Int>("modifiers") ?: NativeEngine.MOD_NONE
+                if (key != null && action != null && lastLinkStatus == NativeEngine.STATUS_CONNECTED) {
+                    when (action) {
+                        NativeEngine.KEY_ACTION_DOWN -> heldKeys.add(key)
+                        NativeEngine.KEY_ACTION_UP -> heldKeys.remove(key)
+                    }
+                    NativeEngine.sendKeyEvent(key, action, modifiers)
+                    ui?.publish()
+                }
+                result.success(null)
+            }
+            "disconnect" -> {
+                result.success(null)
+                returnToConnect(null)
+            }
+            else -> result.notImplemented()
+        }
     }
 
-    private fun cycleBarrelMapping(): String {
-        val values = BarrelButtonMapping.values()
-        barrelMapping = values[(barrelMapping.ordinal + 1) % values.size]
-        return barrelMapping.label
+    private fun setStreamOptions(call: MethodCall) {
+        fun <T : Enum<T>> select(key: String, values: Array<T>): T? {
+            val value = call.argument<String>(key)
+            return values.firstOrNull { it.name == value }
+        }
+        select("touchMode", TouchMode.values())?.let {
+            touchMode = it
+            penOnlyMode = it == TouchMode.PEN_ONLY
+        }
+        select("pressureCurve", PressureCurve.values())?.let { currentPressureCurve = it }
+        select("barrelMapping", BarrelButtonMapping.values())?.let { barrelMapping = it }
+        select("inkMode", InkOverlayView.InkMode.values())?.let {
+            inkMode = it
+            inkOverlayView.inkMode = it
+        }
+        call.argument<Boolean>("pinchZoom")?.let {
+            pinchZoomEnabled = it
+            if (!it) resetZoom()
+        }
+        call.argument<Boolean>("diagnostics")?.let { diagnostics = it }
+        call.argument<Boolean>("minimap")?.let { minimap = it }
+        call.argument<Boolean>("shortcuts")?.let {
+            shortcuts = it
+            if (!it) releaseHeldKeys()
+        }
+
+        val fps = call.argument<Int>("fps")
+        val bitrate = call.argument<Int>("bitrateKbps")
+        var updatedFps = 0
+        var updatedBitrate = 0
+        if (fps != null && (fps == 0 || fps in 1..panelFps.toInt())) {
+            customFps = fps.takeIf { it > 0 }
+            updatedFps = customFps ?: reportedFps
+            setSurfaceFrameRate(customFps?.toFloat() ?: panelFps)
+        }
+        if (bitrate != null && (bitrate == NativeEngine.BITRATE_AUTO || bitrate > 0)) {
+            currentBitrateKbps = bitrate
+            updatedBitrate = bitrate
+        }
+        if (updatedFps != 0 || updatedBitrate != 0) {
+            NativeEngine.updateStreamSettings(updatedFps, updatedBitrate)
+        }
     }
 
-    private fun cycleInkMode(): InkOverlayView.InkMode {
-        val values = InkOverlayView.InkMode.values()
-        inkMode = values[(inkMode.ordinal + 1) % values.size]
-        inkOverlayView.inkMode = inkMode
-        return inkMode
+    private fun setSurfaceFrameRate(fps: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val surface = surfaceView.holder.surface
+            if (surface.isValid) runCatching {
+                surface.setFrameRate(fps, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+            }
+        }
+    }
+
+    private fun releaseHeldKeys() {
+        for (key in heldKeys) {
+            NativeEngine.sendKeyEvent(key, NativeEngine.KEY_ACTION_UP, NativeEngine.MOD_NONE)
+        }
+        heldKeys.clear()
     }
 
     private fun applyPressureCurve(rawPressure: Float): Float {
@@ -144,8 +275,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         return clamped.toDouble().pow(currentPressureCurve.gamma.toDouble()).toFloat()
     }
 
-    // Two-finger gesture & overlay UI touch capture state
-    private var uiTouchConsumed = false
+    // Two-finger gesture state.
     private var twoFingerScrollActive = false
     private var gestureActive = false
     private var gestureNeedsAnchor = false
@@ -162,14 +292,14 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     private val statusUpdateRunnable = object : Runnable {
         override fun run() {
             if (::inkOverlayView.isInitialized) {
-                val prevStatus = inkOverlayView.linkStatus
                 val status = NativeEngine.getConnectionStatus()
-                inkOverlayView.linkStatus = status
-                inkOverlayView.packetsSent = NativeEngine.getSentPacketsCount()
-                inkOverlayView.rttUs = NativeEngine.getRoundTripLatencyUs()
-                if (status != prevStatus || inkOverlayView.showHud || status != NativeEngine.STATUS_CONNECTED) {
+                if (status != lastLinkStatus) {
+                    inkOverlayView.linkStatus = status
                     inkOverlayView.invalidate()
+                    if (status != NativeEngine.STATUS_CONNECTED) heldKeys.clear()
+                    lastLinkStatus = status
                 }
+                ui?.publish()
                 persistNewCredential()
                 if (status == NativeEngine.STATUS_CONNECTED) {
                     disconnectedSinceMs = 0L
@@ -224,7 +354,6 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
                 Log.i("MainActivity", "USB Tethering PC moved to $ip:$port; reconnecting automatically")
                 target = Target(ip, port, name, isUsbTether = true)
                 store.lastTarget = target
-                inkOverlayView.targetLabel = target.label
                 disconnectedSinceMs = 0L
                 stopTetherRediscovery()
                 startNativeClient()
@@ -254,13 +383,21 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     }
 
     /** Goes back to the connection picker, explaining why when the PC refused us. */
-    private fun returnToConnect(status: Int?) {
+    private fun returnToConnect(status: Int?, usbDetached: Boolean = false) {
         if (leaving) return
         leaving = true
         stopTetherRediscovery()
         aoaBridge?.close()
         aoaBridge = null
-        val message = if (status != null) NativeEngine.getLastError() else null
+        val message = if (status != null) NativeEngine.getLastError().takeIf(String::isNotEmpty) else null
+        val name = NativeEngine.getHostName().ifEmpty { target.name }
+        val notice = when {
+            usbDetached -> "usbDetached"
+            status == NativeEngine.STATUS_NEEDS_PIN -> "needsPin"
+            status == NativeEngine.STATUS_AUTH_FAILED -> "authFailed"
+            status == NativeEngine.STATUS_TAKEN_OVER -> "takenOver"
+            else -> null
+        }
         val needPin = status == NativeEngine.STATUS_NEEDS_PIN ||
             (status == NativeEngine.STATUS_AUTH_FAILED && pinUsed.isNotEmpty())
         NativeEngine.stopClient()
@@ -268,11 +405,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             InternalIntents.mark(Intent(this, ConnectActivity::class.java))
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(ConnectActivity.EXTRA_MESSAGE, message)
-                .putExtra(ConnectActivity.EXTRA_ERROR, status == NativeEngine.STATUS_AUTH_FAILED)
+                .putExtra(ConnectActivity.EXTRA_NOTICE, notice)
                 .putExtra(ConnectActivity.EXTRA_NEED_PIN, needPin)
                 .putExtra(ConnectActivity.EXTRA_HOST, target.host)
                 .putExtra(ConnectActivity.EXTRA_PORT, target.port)
-                .putExtra(ConnectActivity.EXTRA_NAME, NativeEngine.getHostName().ifEmpty { target.name })
+                .putExtra(ConnectActivity.EXTRA_NAME, name)
                 .putExtra(ConnectActivity.EXTRA_HOST_ID, targetHostId)
                 .putExtra(ConnectActivity.EXTRA_USB_TETHER, target.isUsbTether)
                 .putExtra(ConnectActivity.EXTRA_NO_AUTO_CONNECT, status == null)
@@ -356,9 +493,6 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         disconnectedSinceMs = 0L
         stopTetherRediscovery()
 
-        inkOverlayView.targetLabel = target.label
-        inkOverlayView.isUsbLink = target.isUsb
-        inkOverlayView.isUsbTetherLink = target.isUsbTether
         updateWifiLock()
         startNativeClient()
     }
@@ -382,13 +516,16 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
             screenWidth = panel.widthPixels,
             screenHeight = panel.heightPixels,
-            maxRefreshRate = refreshRate,
+            maxRefreshRate = customFps ?: refreshRate,
             dpi = metrics.densityDpi,
             supportsStylus = true,
             clientId = store.clientId,
             pin = pinUsed,
             credentials = store.credentials
         )
+        if (currentBitrateKbps != NativeEngine.BITRATE_AUTO) {
+            NativeEngine.updateStreamSettings(0, currentBitrateKbps)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -399,12 +536,16 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
 
     @Deprecated("Back is guarded: an edge swipe while drawing must not drop the connection")
     override fun onBackPressed() {
+        if (controlsView.modal) {
+            ui?.notify("dismissStreamMenu")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (now - lastBackPress < BACK_CONFIRM_MS) {
             returnToConnect(null)
         } else {
             lastBackPress = now
-            Toast.makeText(this, "Swipe back again to change connection", Toast.LENGTH_SHORT).show()
+            ui?.notify("backHint")
         }
     }
 
@@ -424,8 +565,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
                     }
                     if (detached == null || detached == aoaBridge?.accessory) {
                         Log.i("MainActivity", "USB accessory detached; returning to connect screen")
-                        Toast.makeText(this@MainActivity, "USB cable disconnected", Toast.LENGTH_SHORT).show()
-                        returnToConnect(null)
+                        returnToConnect(null, usbDetached = true)
                     }
                 }
             }
@@ -469,7 +609,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
         NativeEngine.initNativeLogging()
 
-        val rootLayout = FrameLayout(this)
+        val rootLayout = FrameLayout(this).apply {
+            // Prevent a second finger from being assigned to Flutter midway through a native pinch.
+            isMotionEventSplittingEnabled = false
+        }
 
         surfaceView = SurfaceView(this).apply {
             setZOrderMediaOverlay(true)
@@ -482,66 +625,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             setOnTouchListener(this@MainActivity)
             setOnGenericMotionListener(this@MainActivity)
-            pinchZoomEnabled = this@MainActivity.pinchZoomEnabled
-            onTogglePinchMode = {
-                this@MainActivity.pinchZoomEnabled = !this@MainActivity.pinchZoomEnabled
-                if (!this@MainActivity.pinchZoomEnabled) resetZoom()
-                this@MainActivity.pinchZoomEnabled
-            }
-            onResetZoom = { resetZoom() }
-
-            penOnlyMode = this@MainActivity.penOnlyMode
-            onTogglePenOnly = {
-                this@MainActivity.penOnlyMode = !this@MainActivity.penOnlyMode
-                this@MainActivity.touchMode = if (this@MainActivity.penOnlyMode) TouchMode.PEN_ONLY else TouchMode.ALL_TOUCH
-                this@MainActivity.inkOverlayView.currentTouchMode = this@MainActivity.touchMode
-                this@MainActivity.penOnlyMode
-            }
-
-            pressureCurveName = this@MainActivity.currentPressureCurve.label
-            onCyclePressureCurve = {
-                this@MainActivity.cyclePressureCurve()
-            }
-
-            barrelMappingName = this@MainActivity.barrelMapping.label
-            onCycleBarrelMapping = {
-                this@MainActivity.cycleBarrelMapping()
-            }
-
             inkMode = this@MainActivity.inkMode
-            onCycleInkMode = {
-                this@MainActivity.cycleInkMode()
-            }
-
-            onSendKeyEvent = { vkCode, action, modifiers ->
-                NativeEngine.sendKeyEvent(vkCode, action, modifiers)
-            }
-
-            currentTouchMode = this@MainActivity.touchMode
-            onSelectTouchMode = { mode ->
-                this@MainActivity.touchMode = mode
-                this@MainActivity.penOnlyMode = (mode == TouchMode.PEN_ONLY)
-                this@MainActivity.inkOverlayView.penOnlyMode = this@MainActivity.penOnlyMode
-                this@MainActivity.inkOverlayView.currentTouchMode = mode
-            }
-
-            onSetPressureCurve = { curve ->
-                this@MainActivity.setPressureCurve(curve)
-            }
-
-            onApplyStreamSettings = { fps, bitrateKbps ->
-                this@MainActivity.currentFps = fps
-                this@MainActivity.currentBitrateKbps = bitrateKbps
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val surf = surfaceView.holder.surface
-                    if (surf != null && surf.isValid) {
-                        runCatching {
-                            surf.setFrameRate(fps.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-                        }
-                    }
-                }
-                NativeEngine.updateStreamSettings(fps, bitrateKbps)
-            }
         }
 
         rootLayout.addView(
@@ -552,15 +636,26 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             inkOverlayView,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
-        inkOverlayView.bringToFront()
+        controlsEngine = FlutterEngine(this)
+        val initialRoute = "/stream"
+        controlsView = StreamControlsView(this)
+        controlsView.attachToFlutterEngine(controlsEngine)
+        rootLayout.addView(
+            controlsView,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+        appearance = AppearanceChannel(this, controlsEngine.dartExecutor.binaryMessenger)
+        ui = AndroidUiChannel(controlsEngine.dartExecutor.binaryMessenger, ::streamState, ::handleUiCall)
+        controlsEngine.navigationChannel.setInitialRoute(initialRoute)
+        controlsEngine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
 
         setContentView(rootLayout)
-
         connectFrom(intent)
     }
 
     override fun onResume() {
         super.onResume()
+        controlsEngine.lifecycleChannel.appIsResumed()
         (getSystemService(DISPLAY_SERVICE) as DisplayManager).registerDisplayListener(displayListener, handler)
         if (::inkOverlayView.isInitialized) {
             inkOverlayView.setVsyncActive(true)
@@ -570,6 +665,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
 
     override fun onPause() {
         super.onPause()
+        controlsEngine.lifecycleChannel.appIsPaused()
+        releaseHeldKeys()
         (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(displayListener)
         if (::inkOverlayView.isInitialized) {
             inkOverlayView.setVsyncActive(false)
@@ -587,6 +684,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         }
         aoaBridge?.close()
         aoaBridge = null
+        appearance?.close()
+        appearance = null
+        ui?.close()
+        ui = null
+        controlsView.detachFromFlutterEngine()
+        controlsEngine.destroy()
         super.onDestroy()
         persistNewCredential()
         releaseWifiLock()
@@ -597,7 +700,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         // Without this the panel idles at its adaptive minimum (50 Hz seen on the Pad 7) and the
         // 120 fps stream is presented unevenly, which reads as jitter.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            runCatching { holder.surface.setFrameRate(panelFps, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) }
+            setSurfaceFrameRate(customFps?.toFloat() ?: panelFps)
         }
         NativeEngine.setSurface(holder.surface)
     }
@@ -643,6 +746,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         panY = 0f
         inkOverlayView.clearCanvas()
         applyViewport()
+        ui?.publish()
     }
 
     private fun anchorGesture(event: MotionEvent, skipIndex: Int = -1) {
@@ -785,23 +889,6 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         if (width <= 0f || height <= 0f) return false
 
         val actionMasked = event.actionMasked
-
-        // Swallow the entire gesture once the overlay UI consumes ACTION_DOWN so trailing
-        // MOVE/UP events never leak through to Windows as phantom taps behind HUD buttons.
-        if (uiTouchConsumed) {
-            if (actionMasked == MotionEvent.ACTION_UP || actionMasked == MotionEvent.ACTION_CANCEL) {
-                uiTouchConsumed = false
-            }
-            return true
-        }
-
-        // Check button clicks (Clear / Toggle HUD / Pinch mode / Minimap)
-        if (actionMasked == MotionEvent.ACTION_DOWN && !gestureActive && !twoFingerScrollActive) {
-            if (inkOverlayView.handleButtonTouch(event.x, event.y)) {
-                uiTouchConsumed = true
-                return true
-            }
-        }
 
         if (touchMode == TouchMode.TWO_FINGER_SCROLL) {
             if (!twoFingerScrollActive && actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 2) {

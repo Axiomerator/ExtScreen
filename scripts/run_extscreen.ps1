@@ -33,6 +33,10 @@ if (Test-Path "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe") {
 }
 
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$dashboardExe = Join-Path $repoRoot 'ui\build\windows\x64\runner\Release\extscreen.exe'
+if (-not (Test-Path -LiteralPath $dashboardExe -PathType Leaf)) {
+    & (Join-Path $PSScriptRoot 'build_windows_ui.ps1')
+}
 
 # 1. Enable Virtual Secondary Display
 Write-Host "[1/4] Ensuring secondary virtual display is active..." -ForegroundColor Green
@@ -95,8 +99,7 @@ if ($RebuildHost -or (-not (Test-Path $hostExe))) {
 $existing = Get-Process extscreen-host -ErrorAction SilentlyContinue
 if ($existing -and (-not $RebuildHost)) {
     Write-Host "[4/4] ExtScreen Host is already running (PID: $($existing.Id))." -ForegroundColor Green
-    Write-Host "       - GUI Dashboard and System Tray are active." -ForegroundColor Gray
-    Write-Host "       - To restart, pass -RebuildHost or close from the system tray." -ForegroundColor Gray
+    Start-Process -FilePath $dashboardExe
     return
 }
 
@@ -106,9 +109,12 @@ Write-Host "       - Press Ctrl+C in this console or choose Exit from the tray i
 Write-Host "=====================================================================" -ForegroundColor Cyan
 Write-Host ""
 
+$previousDashboardPath = $env:EXTSCREEN_DASHBOARD_PATH
+$env:EXTSCREEN_DASHBOARD_PATH = $dashboardExe
 Push-Location $repoRoot
 try {
     & $hostExe
 } finally {
     Pop-Location
+    $env:EXTSCREEN_DASHBOARD_PATH = $previousDashboardPath
 }

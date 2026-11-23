@@ -18,6 +18,8 @@ mod shared;
 mod stats;
 mod transport;
 #[cfg(windows)]
+mod dashboard;
+#[cfg(windows)]
 mod gui;
 #[cfg(windows)]
 use capture::{detect_display, start_wgc_capture};
@@ -30,20 +32,17 @@ const STATS_INTERVAL: Duration = Duration::from_secs(5);
 pub use shared::attach_to_default_desktop;
 
 #[cfg(windows)]
-unsafe fn acquire_single_instance_mutex() -> Option<windows::Win32::Foundation::HANDLE> {
+unsafe fn acquire_single_instance_mutex(show_window: bool) -> Option<windows::Win32::Foundation::HANDLE> {
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+
     use windows::core::w;
 
     match CreateMutexW(None, true, w!("Global\\ExtScreenHostSingleInstanceMutex")) {
         Ok(handle) => {
             if GetLastError() == ERROR_ALREADY_EXISTS {
-                if let Ok(hwnd) = FindWindowW(w!("ExtScreenDashboardClass"), None) {
-                    if !hwnd.0.is_null() {
-                        let _ = ShowWindow(hwnd, SW_RESTORE);
-                        let _ = SetForegroundWindow(hwnd);
-                    }
+                if show_window {
+                    gui::show_running_dashboard();
                 }
                 None
             } else {
@@ -108,7 +107,9 @@ async fn run() -> Result<()> {
     // Before logging starts: a second launch only brings the running dashboard forward, and must
     // not rotate the running host's log file.
     #[cfg(windows)]
-    let _instance_lock = match unsafe { acquire_single_instance_mutex() } {
+    let minimized = std::env::args().any(|arg| arg == "--minimized");
+    #[cfg(windows)]
+    let _instance_lock = match unsafe { acquire_single_instance_mutex(!minimized) } {
         Some(handle) => handle,
         None => return Ok(()),
     };
@@ -155,7 +156,13 @@ async fn run() -> Result<()> {
     let shared = Arc::new(HostShared::new(injector, disp));
     // New tablets on USB are admitted only after the user says yes at the PC.
     #[cfg(windows)]
-    shared.pairing.set_usb_approver(Arc::new(gui::usb_approval_prompt));
+    {
+        let host = Arc::downgrade(&shared);
+        shared.pairing.set_usb_approver(Arc::new(move |name| {
+            host.upgrade()
+                .is_some_and(|host| dashboard::request_usb_approval(name, &host.is_running))
+        }));
+    }
 
     // Bind before anything advertises the port (adb reverse, dashboard, Wi-Fi beacons).
     let server = TransportServer::bind(DEFAULT_PORT, shared.clone()).await?;
@@ -164,13 +171,15 @@ async fn run() -> Result<()> {
         warn!("Listening on port {} instead of {DEFAULT_PORT}; USB is remapped with adb reverse", server.port());
     }
 
+    let dashboard_shutdown = Arc::new(tokio::sync::Notify::new());
     #[cfg(windows)]
     {
         transport::spawn_aoa_manager(shared.clone());
         gui::spawn_adb_watcher(shared.clone());
-        // Autostart passes --minimized: start in the tray instead of opening the dashboard.
-        let minimized = std::env::args().any(|a| a == "--minimized");
-        gui::spawn_gui_dashboard(shared.clone(), !minimized);
+        if let Err(err) = dashboard::spawn(shared.clone(), dashboard_shutdown.clone()) {
+            warn!("Could not open dashboard pipe: {err:#}");
+        }
+        gui::spawn_tray(shared.clone(), dashboard_shutdown.clone(), !minimized);
     }
 
     // Two slots: one frame being written to the socket, one waiting. Anything more is latency.
@@ -201,6 +210,9 @@ async fn run() -> Result<()> {
         _ = server_handle => {
             info!("Transport server stopped");
         }
+        _ = dashboard_shutdown.notified() => {
+            info!("Desktop exit requested. Stopping ExtScreen host.");
+        }
         _ = tokio::signal::ctrl_c() => {
             info!("Shutdown signal received. Exiting ExtScreen host.");
         }
@@ -211,7 +223,11 @@ async fn run() -> Result<()> {
 
     shared.is_running.store(false, Ordering::SeqCst);
     #[cfg(windows)]
-    capture::virtual_display::detach();
+    {
+        dashboard::cancel_usb_approval();
+        gui::close_desktop();
+        capture::virtual_display::detach();
+    }
     Ok(())
 }
 

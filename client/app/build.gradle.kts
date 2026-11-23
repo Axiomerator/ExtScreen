@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("dev.flutter.flutter-gradle-plugin")
 }
 
 // Release signing. The key never lives in the repository: point EXTSCREEN_KEYSTORE_PROPERTIES at a
@@ -16,14 +17,14 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.extscreen"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.extscreen"
         minSdk = 26 // Android 8.0 Oreo+ for MediaCodec low latency and modern NDK
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "1.2.0"
 
         ndk {
             // 64-bit and 32-bit ARM phones/tablets, plus x86_64 (Chromebooks, emulators).
@@ -47,6 +48,7 @@ android {
             signingConfig = signingConfigs.findByName("release")
             // The native library calls back into Kotlin by name over JNI, so no shrinking/renaming.
             isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -59,16 +61,22 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     sourceSets {
         getByName("main") {
             // jniLibs directory where the compiled Rust .so is placed
             jniLibs.srcDirs("src/main/jniLibs")
         }
     }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+flutter {
+    source = "../../ui"
 }
 
 dependencies {

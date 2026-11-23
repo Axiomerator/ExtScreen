@@ -100,6 +100,17 @@ else {
     } else { Warn "Rust not available."; $todo.Add("Install Rust from https://rustup.rs, then run setup.bat again.") }
 }
 
+$dashboardExe = Join-Path $root 'ui\build\windows\x64\runner\Release\extscreen.exe'
+if (-not (Test-Path -LiteralPath $dashboardExe -PathType Leaf)) {
+    try {
+        & (Join-Path $PSScriptRoot 'build_windows_ui.ps1')
+        Ok "Windows dashboard built."
+    } catch {
+        Warn "Windows dashboard build failed: $_"
+        $todo.Add("Install FVM, then run scripts\build_windows_ui.ps1.")
+    }
+}
+
 # 4. adb
 Step 4 "Android tools (adb, used for the USB cable and to install the app)"
 $sdkAdb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"

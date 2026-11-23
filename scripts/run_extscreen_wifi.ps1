@@ -6,7 +6,7 @@
     firewall allows tablets on your network, shows which addresses the tablet can reach, opens
     ExtScreen on the tablet if one happens to be plugged in for ADB, and runs the host.
 
-    On the tablet: open ExtScreen, tap your PC under "PCs on this Wi-Fi", enter the PIN from the
+    On the tablet: open ExtScreen, tap your PC under "Local network", enter the PIN from the
     PC dashboard the first time. Afterwards it reconnects without a PIN.
 .PARAMETER RebuildHost
     Stop a running host and rebuild the release binary first.
@@ -31,6 +31,10 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 }
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $hostExe = Join-Path $repoRoot "target\release\extscreen-host.exe"
+$dashboardExe = Join-Path $repoRoot 'ui\build\windows\x64\runner\Release\extscreen.exe'
+if (-not (Test-Path -LiteralPath $dashboardExe -PathType Leaf)) {
+    & (Join-Path $PSScriptRoot 'build_windows_ui.ps1')
+}
 
 # 1. Virtual secondary display
 Write-Host "[1/5] Ensuring secondary virtual display is active..." -ForegroundColor Green
@@ -90,18 +94,25 @@ if ($RebuildHost -or (-not (Test-Path $hostExe))) {
 
 Write-Host ""
 Write-Host "=====================================================================" -ForegroundColor Cyan
-Write-Host "  On the tablet: tap your PC under 'PCs on this Wi-Fi'." -ForegroundColor Yellow
+Write-Host "  On the tablet: tap your PC under 'Local network'." -ForegroundColor Yellow
 Write-Host "  First time only: type the 6-digit PIN from the dashboard's" -ForegroundColor Yellow
-Write-Host "  'Wi-Fi & Pairing' card (system tray icon if the window is hidden)." -ForegroundColor Yellow
+Write-Host "  pairing page (system tray icon if the window is hidden)." -ForegroundColor Yellow
 Write-Host "=====================================================================" -ForegroundColor Cyan
 
 $existing = Get-Process extscreen-host -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "[5/5] ExtScreen Host is already running (PID: $($existing.Id)); showing its dashboard." -ForegroundColor Green
-    & (Join-Path $repoRoot "scripts\launch_host.ps1") | Out-Null   # second launch only focuses the window
+    Start-Process -FilePath $dashboardExe
     return
 }
 
 Write-Host "[5/5] Starting ExtScreen Host (Ctrl+C or tray > Exit to stop)..." -ForegroundColor Cyan
+$previousDashboardPath = $env:EXTSCREEN_DASHBOARD_PATH
+$env:EXTSCREEN_DASHBOARD_PATH = $dashboardExe
 Push-Location $repoRoot
-try { & $hostExe } finally { Pop-Location }
+try {
+    & $hostExe
+} finally {
+    Pop-Location
+    $env:EXTSCREEN_DASHBOARD_PATH = $previousDashboardPath
+}

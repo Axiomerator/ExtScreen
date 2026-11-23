@@ -5,6 +5,8 @@ target/
 *.exe
 .idea/
 .gradle/
+**/.cxx/
+**/.kotlin/
 **/build/
 build/
 local.properties
@@ -21,3 +23,11 @@ keystore.properties
 
 # Release output
 /dist/
+
+# Local notes, package artifacts and release credentials
+/多语言开发环境与版本管理规范 DAWN版.md
+*.apk
+*.aab
+*.p12
+*.pfx
+*.signing.properties

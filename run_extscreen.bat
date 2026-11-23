@@ -84,6 +84,11 @@ echo.
 :: Step 4: Launch Host Executable
 echo [4/4] Starting ExtScreen Windows Host...
 set "HOST_EXE=%REPO_ROOT%\target\release\extscreen-host.exe"
+set "EXTSCREEN_DASHBOARD_PATH=%REPO_ROOT%\ui\build\windows\x64\runner\Release\extscreen.exe"
+if not exist "%EXTSCREEN_DASHBOARD_PATH%" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\build_windows_ui.ps1"
+    if errorlevel 1 exit /b 1
+)
 
 tasklist /fi "imagename eq extscreen-host.exe" 2>nul | findstr /i "extscreen-host.exe" >nul 2>&1
 if %ERRORLEVEL% equ 0 (

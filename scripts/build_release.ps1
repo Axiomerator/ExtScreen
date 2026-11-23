@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Builds a complete ExtScreen release into dist\: the Android APK, the Windows installer and
+    Builds a complete ExtScreen release into dist\: the Android APK, the portable Windows ZIP and
     SHA256SUMS.txt.
 .DESCRIPTION
     Runs the tests, builds the Android native library for every supported CPU (arm64-v8a,
-    armeabi-v7a, x86_64), the APK, the Windows host, and the Inno Setup installer.
+    armeabi-v7a, x86_64), the APK, Windows host, and Flutter dashboard with its portable runtime.
 
-    Needs: Rust (with the Android targets and cargo-ndk), the Android SDK + NDK, JDK 17 and
-    Inno Setup 6. The APK is signed when a keystore is configured (see client/app/build.gradle.kts:
+    Needs: Rust (with the Android targets and cargo-ndk), the Android SDK + NDK, JDK 17,
+    FVM with the pinned Flutter SDK. The APK is signed when a keystore is configured (see client/app/build.gradle.kts:
     EXTSCREEN_KEYSTORE_PROPERTIES or client/keystore.properties); otherwise it is left unsigned.
 .PARAMETER SkipTests
     Skip the unit tests.
@@ -31,49 +31,22 @@ function Run($exe, [string[]]$arguments, $dir = $root) {
 $version = (Select-String -Path (Join-Path $root "host\Cargo.toml") -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 Write-Host "ExtScreen $version" -ForegroundColor Yellow
 
-# Toolchain discovery
-$sdk = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA "Android\Sdk")) |
-    Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $sdk) { throw "Android SDK not found (set ANDROID_HOME)." }
-if (-not $env:ANDROID_NDK_HOME) {
-    $ndk = Get-ChildItem (Join-Path $sdk "ndk") -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $ndk) { throw "Android NDK not found (install it with the SDK manager or set ANDROID_NDK_HOME)." }
-    $env:ANDROID_NDK_HOME = $ndk.FullName
-}
-$isccCommand = Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-$iscc = @($isccCommand.Source, "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
-    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
-if (-not $iscc) { throw "Inno Setup 6 not found. Install it or add the directory containing ISCC.exe to PATH." }
-
 New-Item -ItemType Directory -Force $dist | Out-Null
 
 if (-not $SkipTests) {
     Step "Tests"
-    Run cargo @("test", "--release", "--workspace")
-    Run cargo @("test", "--release") (Join-Path $root "client\native")
+    Run cargo @("test", "--release", "--workspace", "--locked")
+    Run cargo @("test", "--release", "--locked") (Join-Path $root "client\native")
 }
 
-Step "Android native library (arm64-v8a, armeabi-v7a, x86_64)"
-Run cargo @("ndk", "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-P", "26", "-o", "..\app\src\main\jniLibs", "build", "--release") (Join-Path $root "client\native")
-
-Step "Android APK"
-$previousJavaHome = $env:JAVA_HOME
-try {
-    if ($env:EXTSCREEN_JAVA_HOME) {
-        if (-not (Test-Path -LiteralPath (Join-Path $env:EXTSCREEN_JAVA_HOME "bin\java.exe") -PathType Leaf)) {
-            throw "EXTSCREEN_JAVA_HOME must point to a JDK installation."
-        }
-        $env:JAVA_HOME = $env:EXTSCREEN_JAVA_HOME
-    }
-    Run (Join-Path $root "client\gradlew.bat") @("assembleRelease", "--console=plain") (Join-Path $root "client")
-} finally {
-    $env:JAVA_HOME = $previousJavaHome
-}
+Step "Android APK and native libraries"
+& (Join-Path $PSScriptRoot 'build_android.ps1') -Configuration Release
 $apkDir = Join-Path $root "client\app\build\outputs\apk\release"
-$apk = @("app-release.apk", "app-release-unsigned.apk") | ForEach-Object { Join-Path $apkDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $apk) { throw "No APK produced in $apkDir" }
+$gradleOutput = Get-Content -LiteralPath (Join-Path $apkDir 'output-metadata.json') -Raw | ConvertFrom-Json
+$apk = Join-Path $apkDir $gradleOutput.elements[0].outputFile
+if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw "No APK produced in $apkDir" }
 if ($apk -like "*unsigned*") { Write-Warning "The APK is unsigned (no keystore configured); Android will not install it as is." }
-Copy-Item $apk (Join-Path $dist "ExtScreen-$version.apk") -Force
+Copy-Item -LiteralPath $apk -Destination (Join-Path $dist "ExtScreen-$version.apk") -Force
 
 Step "Windows host"
 $defaultHostExe = Join-Path $root "target\release\extscreen-host.exe"
@@ -89,18 +62,23 @@ if (Test-Path $defaultHostExe) {
 if ($hostLocked) {
     Write-Warning "target\release\extscreen-host.exe is currently running; building into target\release-stage so your live display is not interrupted."
     $stageDir = Join-Path $root "target\release-stage"
-    Run cargo @("build", "--release", "-p", "extscreen-host", "--target-dir", $stageDir)
-    $hostExeForInstaller = Join-Path $stageDir "release\extscreen-host.exe"
+    Run cargo @("build", "--release", "--locked", "-p", "extscreen-host", "--bin", "extscreen-host", "--target-dir", $stageDir)
+    $hostExe = Join-Path $stageDir "release\extscreen-host.exe"
 } else {
-    Run cargo @("build", "--release", "-p", "extscreen-host")
-    $hostExeForInstaller = $defaultHostExe
+    Run cargo @("build", "--release", "--locked", "-p", "extscreen-host", "--bin", "extscreen-host")
+    $hostExe = $defaultHostExe
 }
 
-Step "Windows installer"
-Run $iscc @("/Q", "/DMyAppVersion=$version", "/DHostExe=$hostExeForInstaller", (Join-Path $root "installer\extscreen_setup.iss"))
+Step "Windows Prism dashboard"
+& (Join-Path $PSScriptRoot 'build_windows_ui.ps1')
+$dashboardDir = Join-Path $root 'ui\build\windows\x64\runner\Release'
+
+Step "Windows portable ZIP"
+$windowsZip = "ExtScreen-$version-Windows-x64.zip"
+& (Join-Path $PSScriptRoot 'package_windows.ps1') -DashboardDir $dashboardDir -HostExe $hostExe -OutputZip (Join-Path $dist $windowsZip)
 
 Step "Checksums"
-$files = @("ExtScreen-$version.apk", "ExtScreen-Setup-$version.exe")
+$files = @("ExtScreen-$version.apk", $windowsZip)
 $lines = foreach ($f in $files) {
     $hash = (Get-FileHash (Join-Path $dist $f) -Algorithm SHA256).Hash.ToLower()
     "$hash  $f"

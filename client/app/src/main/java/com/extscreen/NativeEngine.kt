@@ -78,24 +78,8 @@ object NativeEngine {
 
     const val KEY_ACTION_DOWN = 0
     const val KEY_ACTION_UP = 1
-    const val KEY_ACTION_TAP = 2
 
     const val MOD_NONE = 0
-    const val MOD_CTRL = 1
-    const val MOD_SHIFT = 2
-    const val MOD_ALT = 4
-
-    const val VK_SHIFT = 0x10
-    const val VK_CONTROL = 0x11
-    const val VK_MENU = 0x12 // Alt
-    const val VK_SPACE = 0x20
-    const val VK_0 = 0x30
-    const val VK_Y = 0x59
-    const val VK_Z = 0x5A
-    const val VK_OEM_4 = 0xDB // '[' decrease brush
-    const val VK_OEM_6 = 0xDD // ']' increase brush
-    const val VK_TAB = 0x09
-    const val VK_ESCAPE = 0x1B
 
     external fun sendKeyEvent(
         vkCode: Int,
