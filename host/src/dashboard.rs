@@ -264,7 +264,7 @@ async fn send_response(pipe: &mut NamedPipeServer, response: Value) -> io::Resul
 async fn dispatch(request: Request, shared: &Arc<HostShared>) -> Value {
     match request {
         Request::Status => return json!({ "ok": true, "status": status(shared) }),
-        Request::SetFps(fps @ (60 | 90 | 120)) => shared.choose_fps(fps),
+        Request::SetFps(fps @ (0 | 60 | 90 | 120)) => shared.choose_fps(fps),
         Request::SetBitrate(0) => shared.choose_auto_bitrate(),
         Request::SetBitrate(kbps @ (15000 | 25000 | 35000 | 50000)) => {
             shared.choose_bitrate_kbps(kbps)
@@ -336,7 +336,7 @@ fn status(shared: &HostShared) -> Value {
         .active_codec
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let (width, height) = display.stream_size();
+    let stream = shared.stream_state();
     let (usb, lan) = network_addresses();
     json!({
         "connected": connected,
@@ -350,14 +350,19 @@ fn status(shared: &HostShared) -> Value {
         "usb_links": shared.usb_links.load(Ordering::Relaxed),
         "usb_approval": pending_usb_approval(),
         "port": shared.tcp_port.load(Ordering::Relaxed),
-        "width": width,
-        "height": height,
+        "width": stream.stream_width,
+        "height": stream.stream_height,
         "left": display.left,
         "top": display.top,
-        "refresh_hz": display.refresh_hz,
-        "fps": shared.target_fps.load(Ordering::Relaxed),
-        "bitrate_kbps": shared.target_bitrate_kbps.load(Ordering::Relaxed),
-        "manual_bitrate_kbps": shared.manual_bitrate_kbps.load(Ordering::Relaxed),
+        "refresh_hz": stream.refresh_hz,
+        "fps": stream.target_fps,
+        "manual_fps": shared.manual_fps(),
+        "bitrate_kbps": stream.bitrate_kbps,
+        "manual_bitrate_kbps": stream.manual_bitrate_kbps,
+        "orientation": match stream.orientation {
+            extscreen_common::protocol::DisplayOrientation::Portrait => "portrait",
+            extscreen_common::protocol::DisplayOrientation::Landscape => "landscape",
+        },
         "codec": match codec { VideoCodec::Hevc => "HEVC", VideoCodec::H264 => "H.264", VideoCodec::Av1 => "AV1" },
         "pin": shared.pairing.pin(),
         "pairing_paused_seconds": shared.pairing.pairing_paused().map(|left| left.as_secs().max(1)),

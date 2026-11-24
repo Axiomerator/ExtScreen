@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
+import android.content.res.Configuration
+import android.graphics.Point
 import android.graphics.RectF
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
@@ -16,6 +18,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Display
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -30,6 +33,7 @@ import io.flutter.plugin.common.MethodChannel
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 enum class PressureCurve(val gamma: Float) {
     LINEAR(1.0f), SOFT(0.65f), FIRM(1.35f), HARD(1.8f)
@@ -47,6 +51,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     private lateinit var controlsEngine: FlutterEngine
     private var ui: AndroidUiChannel? = null
     private var appearance: AppearanceChannel? = null
+    private val chrome by lazy { WindowChrome(window, immersive = true) }
+    private val hostStream = IntArray(8)
     private var diagnostics = false
     private var minimap = true
     private var shortcuts = false
@@ -66,36 +72,71 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     private var disconnectedSinceMs = 0L
     private var lastTetherIfaceSpec: String? = null
 
-    /**
-     * Frame rate the host streams at and the panel is asked to run at: the panel's highest
-     * refresh rate at its current size (144 Hz on the Pad 7). A stream below the panel's rate
-     * makes it repeat frames unevenly, which reads as jitter.
-     */
-    private var reportedFps = 0
+    private data class Panel(
+        val width: Int,
+        val height: Int,
+        val refreshHz: Int,
+        val maxRefreshHz: Int
+    )
 
-    /** Tells the host when the panel starts running faster than it was told (the PC follows). */
+    private var panel: Panel? = null
+    private var reportedFps = 0
+    private val refreshPanel = Runnable { updatePanel() }
+
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {}
         override fun onDisplayRemoved(displayId: Int) {}
         override fun onDisplayChanged(displayId: Int) {
-            if (displayId != windowManager.defaultDisplay.displayId) return
-            val now = windowManager.defaultDisplay.refreshRate.toInt()
-            // Only upward: the panel idles at lower rates when the picture is still, and the
-            // PC's monitor must not be switched back and forth for that.
-            if (reportedFps in 1 until now) {
-                reportedFps = now
-                if (customFps == null) NativeEngine.updateStreamSettings(now, 0)
-            }
+            if (displayId == streamDisplay().displayId) schedulePanelRefresh()
         }
     }
 
-    private val panelFps: Float by lazy {
-        val display = windowManager.defaultDisplay
-        val size = display.mode
+    @Suppress("DEPRECATION")
+    private fun streamDisplay(): Display =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display ?: windowManager.defaultDisplay
+        else windowManager.defaultDisplay
+
+    @Suppress("DEPRECATION")
+    private fun readPanel(): Panel {
+        val display = streamDisplay()
+        // Use the complete display, including any bars and cutout excluded by the current window.
+        val dimensions = Point().also(display::getRealSize)
+        val mode = display.mode
         val best = display.supportedModes
-            .filter { it.physicalWidth == size.physicalWidth && it.physicalHeight == size.physicalHeight }
+            .filter { it.physicalWidth == mode.physicalWidth && it.physicalHeight == mode.physicalHeight }
             .maxOfOrNull { it.refreshRate } ?: display.refreshRate
-        minOf(best, MAX_STREAM_FPS)
+        return Panel(
+            dimensions.x,
+            dimensions.y,
+            display.refreshRate.roundToInt().coerceAtLeast(30),
+            best.roundToInt().coerceIn(30, MAX_STREAM_FPS)
+        )
+    }
+
+    private fun schedulePanelRefresh() {
+        handler.removeCallbacks(refreshPanel)
+        handler.post(refreshPanel)
+    }
+
+    private fun updatePanel() {
+        val next = readPanel()
+        val previous = panel
+        if (next == previous || next.width <= 0 || next.height <= 0) return
+        panel = next
+        val resized = previous == null || previous.width != next.width || previous.height != next.height
+        val sameMode = !resized || previous?.let { it.width == next.height && it.height == next.width } == true
+
+        // Keep the virtual monitor steady while Android downshifts its adaptive panel at idle.
+        val observed = next.refreshHz.coerceAtMost(next.maxRefreshHz)
+        val fps = if (sameMode) maxOf(reportedFps, observed).coerceAtMost(next.maxRefreshHz) else observed
+        val rateChanged = fps != reportedFps
+        reportedFps = fps
+        if (previous?.maxRefreshHz != next.maxRefreshHz) applyFrameRatePreference()
+        if (resized) resetZoom()
+        if (resized || rateChanged) {
+            NativeEngine.updateDisplay(next.width, next.height, reportedFps)
+        }
+        ui?.publish()
     }
 
     // Client-side viewport: the decoded video is scaled/translated locally, so zoom costs no
@@ -121,6 +162,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         val height = surfaceView.height.coerceAtLeast(1)
         val left = -panX / (width * zoomScale)
         val top = -panY / (height * zoomScale)
+        val currentPanel = panel ?: readPanel()
+        val haveStream = lastLinkStatus == NativeEngine.STATUS_CONNECTED && NativeEngine.readStreamState(hostStream)
+        fun confirmed(index: Int): Int? = hostStream[index].takeIf { haveStream && it > 0 }
         return mapOf(
             "status" to lastLinkStatus,
             "peerName" to NativeEngine.getHostName().ifEmpty { target.name },
@@ -128,8 +172,28 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             "directUsb" to target.isUsb,
             "estimatedWidth" to surfaceView.width,
             "estimatedHeight" to surfaceView.height,
-            "fps" to (customFps ?: reportedFps.takeIf { it > 0 } ?: panelFps.toInt()),
-            "maxFps" to panelFps.toInt(),
+            "panelWidth" to currentPanel.width,
+            "panelHeight" to currentPanel.height,
+            "panelRefreshHz" to currentPanel.refreshHz,
+            "streamWidth" to confirmed(0),
+            "streamHeight" to confirmed(1),
+            "refreshHz" to confirmed(2),
+            "targetFps" to confirmed(3),
+            "streamBitrateKbps" to confirmed(4),
+            "manualBitrateKbps" to hostStream[5].takeIf { haveStream && it >= 0 },
+            "orientation" to when (confirmed(6)) {
+                1 -> "landscape"
+                2 -> "portrait"
+                else -> null
+            },
+            "codec" to when (confirmed(7)) {
+                1 -> "h264"
+                2 -> "hevc"
+                3 -> "av1"
+                else -> null
+            },
+            "fps" to (customFps ?: reportedFps.takeIf { it > 0 } ?: currentPanel.refreshHz),
+            "maxFps" to currentPanel.maxRefreshHz,
             "bitrateKbps" to currentBitrateKbps,
             "rttUs" to if (diagnostics) NativeEngine.getRoundTripLatencyUs() else 0L,
             "packetsSent" to if (diagnostics) NativeEngine.getSentPacketsCount() else 0L,
@@ -175,7 +239,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
                     val bottom = r["bottom"]?.toFloat() ?: return@mapNotNull null
                     if (left < right && top < bottom) RectF(left, top, right, bottom) else null
                 }
-                controlsView.setHitAreas(call.argument<Boolean>("modal") == true, regions)
+                controlsView.setHitAreas(
+                    modal = call.argument<Boolean>("modal") == true,
+                    popupOpen = call.argument<Boolean>("popupOpen") == true,
+                    rectangles = regions
+                )
                 result.success(null)
             }
             "resetZoom" -> {
@@ -238,10 +306,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         val bitrate = call.argument<Int>("bitrateKbps")
         var updatedFps = 0
         var updatedBitrate = 0
-        if (fps != null && (fps == 0 || fps in 1..panelFps.toInt())) {
+        if (fps != null && (fps == 0 || fps in 1..(panel ?: readPanel()).maxRefreshHz)) {
             customFps = fps.takeIf { it > 0 }
-            updatedFps = customFps ?: reportedFps
-            setSurfaceFrameRate(customFps?.toFloat() ?: panelFps)
+            updatedFps = customFps ?: NativeEngine.FPS_AUTO
+            applyFrameRatePreference()
         }
         if (bitrate != null && (bitrate == NativeEngine.BITRATE_AUTO || bitrate > 0)) {
             currentBitrateKbps = bitrate
@@ -250,6 +318,13 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         if (updatedFps != 0 || updatedBitrate != 0) {
             NativeEngine.updateStreamSettings(updatedFps, updatedBitrate)
         }
+    }
+
+    private fun applyFrameRatePreference() {
+        val limit = (panel ?: readPanel()).maxRefreshHz
+        val fps = (customFps?.coerceAtMost(limit) ?: limit).toFloat()
+        window.attributes = window.attributes.apply { preferredRefreshRate = fps }
+        setSurfaceFrameRate(fps)
     }
 
     private fun setSurfaceFrameRate(fps: Float) {
@@ -498,34 +573,23 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     }
 
     private fun startNativeClient() {
-        // The whole panel, not `displayMetrics`: that excludes the cutout/status area (3200x2006 on a
-        // 3200x2136 panel), so the host would pick a virtual monitor with the wrong aspect ratio.
         val metrics = resources.displayMetrics
-        val display = (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay
-        val panel = android.util.DisplayMetrics().also {
-            @Suppress("DEPRECATION")
-            display.getRealMetrics(it)
-        }
-        // What the panel actually runs at, not what it could: the system may cap apps below the
-        // panel's top mode (120 of 144 Hz here), and a faster stream would then be dropped unevenly.
-        val refreshRate = display.refreshRate.toInt().coerceAtLeast(60)
-        reportedFps = refreshRate
+        val current = readPanel()
+        panel = current
+        reportedFps = current.refreshHz.coerceAtMost(current.maxRefreshHz)
         NativeEngine.startClient(
             host = target.host,
             port = target.port,
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
-            screenWidth = panel.widthPixels,
-            screenHeight = panel.heightPixels,
-            maxRefreshRate = customFps ?: refreshRate,
+            screenWidth = current.width,
+            screenHeight = current.height,
+            maxRefreshRate = reportedFps,
             dpi = metrics.densityDpi,
             supportsStylus = true,
             clientId = store.clientId,
             pin = pinUsed,
             credentials = store.credentials
         )
-        if (currentBitrateKbps != NativeEngine.BITRATE_AUTO) {
-            NativeEngine.updateStreamSettings(0, currentBitrateKbps)
-        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -536,7 +600,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
 
     @Deprecated("Back is guarded: an edge swipe while drawing must not drop the connection")
     override fun onBackPressed() {
-        if (controlsView.modal) {
+        if (controlsView.hasOpenControls) {
             ui?.notify("dismissStreamMenu")
             return
         }
@@ -586,25 +650,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
                 or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
-        // Draw under the camera cutout so the video covers the full panel and matches what the host streams.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes = window.attributes.apply {
-                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                } else {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                }
-                preferredRefreshRate = panelFps
-            }
-        }
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            or View.SYSTEM_UI_FLAG_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        )
+        chrome.setUp()
 
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
         NativeEngine.initNativeLogging()
@@ -644,7 +690,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             controlsView,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
-        appearance = AppearanceChannel(this, controlsEngine.dartExecutor.binaryMessenger)
+        appearance = AppearanceChannel(this, controlsEngine.dartExecutor.binaryMessenger, chrome::applyTheme).also {
+            it.syncSystemBars()
+        }
         ui = AndroidUiChannel(controlsEngine.dartExecutor.binaryMessenger, ::streamState, ::handleUiCall)
         controlsEngine.navigationChannel.setInitialRoute(initialRoute)
         controlsEngine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
@@ -660,6 +708,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
         if (::inkOverlayView.isInitialized) {
             inkOverlayView.setVsyncActive(true)
         }
+        chrome.applyVisibility()
+        appearance?.syncSystemBars()
+        schedulePanelRefresh()
         handler.post(statusUpdateRunnable)
     }
 
@@ -672,6 +723,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
             inkOverlayView.setVsyncActive(false)
         }
         handler.removeCallbacks(statusUpdateRunnable)
+        handler.removeCallbacks(refreshPanel)
         stopTetherRediscovery()
         persistNewCredential()
     }
@@ -699,14 +751,19 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
     override fun surfaceCreated(holder: SurfaceHolder) {
         // Without this the panel idles at its adaptive minimum (50 Hz seen on the Pad 7) and the
         // 120 fps stream is presented unevenly, which reads as jitter.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            setSurfaceFrameRate(customFps?.toFloat() ?: panelFps)
-        }
+        applyFrameRatePreference()
         NativeEngine.setSurface(holder.surface)
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         applyViewport()
+        schedulePanelRefresh()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        appearance?.syncSystemBars()
+        schedulePanelRefresh()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -1157,7 +1214,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener, V
 
     companion object {
         /** The stream never runs faster than this, whatever the panel can do. */
-        const val MAX_STREAM_FPS = 144f
+        const val MAX_STREAM_FPS = 144
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_NAME = "name"

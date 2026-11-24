@@ -15,7 +15,7 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 
 ## 功能
 
-- **Prism UI。** Windows 和安卓共享 Flutter + Prism UI 控件。安卓连接页适配手机和平板，串流中可通过液态玻璃浮层调整控制选项。两端都可在「设置 → 外观」中选择简体中文或 English、浅色或深色。
+- **Prism UI。** Windows 和安卓共享 Flutter + Prism UI 控件。安卓连接页适配手机和平板，串流中可通过液态玻璃浮层调整控制选项。两端都可在「设置 → 外观」中选择简体中文或 English、跟随系统、浅色或深色。首次启动默认跟随系统。
 
 - **Windows 扩展显示。** Windows 会识别到一块独立的显示器，可以在系统设置里调整位置，并把窗口拖到平板上。驱动支持设备面板分辨率时可以逐像素显示。虚拟屏支持 60–144 Hz，实际可用模式取决于设备和驱动。
 - **USB 有线和局域网。** 支持 USB 网络共享、Wi-Fi 和 ADB 直连。通过 USB 网络共享连接时，电脑会自动发现设备所在的链路，码率最高可达 120 Mbps。USB 网络共享和局域网可直接使用便携包。已通过 PIN 配对的设备会自动重连。
@@ -29,7 +29,7 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 | 设备或连接方式 | 要求 |
 | --- | --- |
 | Windows 电脑 | Windows 10 2004 或更新版本，或 Windows 11（x64）。Windows N 版需要启用 [Media Feature Pack](https://support.microsoft.com/en-us/windows/experience/platform-variants/media-feature-pack-for-windows-n)。建议使用支持硬件视频编码的 NVIDIA、AMD 或 Intel 显卡。 |
-| 安卓设备 | Android 8.0 或更新版本，支持 `arm64-v8a`、`armeabi-v7a` 和 `x86_64`，串流界面横屏使用。触控笔可选。 |
+| 安卓设备 | Android 8.0 或更新版本，支持 `arm64-v8a`、`armeabi-v7a` 和 `x86_64`，串流支持横竖屏切换。触控笔可选。 |
 | USB | 使用能传输数据的 USB 线。按设备支持情况选择 USB 网络共享或 ADB 直连。 |
 | Wi-Fi 或局域网 | 电脑与安卓设备在同一局域网内，Windows 将该网络设为「专用网络」。无线连接建议使用 5 GHz Wi-Fi。 |
 
@@ -51,7 +51,7 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 
 ### 使用方式
 
-- 点击安卓串流画面右上方的 **控制** 可调整刷新率、码率、触控模式、笔压曲线、笔身按键和快捷栏。窄屏从底部打开控制，宽屏从侧边打开。码率可先用 **自动**。
+- 点击安卓串流画面右上方的 **控制** 可调整帧率上限、码率、触控模式、笔压曲线、笔身按键和快捷栏。控制以半透明浮窗显示。子菜单收起后，浮窗外可继续操作画面。码率可先用 **自动**。
 - 双指捏合可缩放画面。双指双击可重置缩放。
 - 连续执行两次安卓返回操作，可回到连接界面。
 - 同一时间串流到一台设备。另一台设备接管时，原设备会收到提示。

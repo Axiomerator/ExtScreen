@@ -335,14 +335,15 @@ class _AndroidScreenState extends State<AndroidScreen> {
               value: appearance.chinese,
               onChanged: (value) => unawaited(appearance.setChinese(value)),
             ),
-            _OptionsRow<bool>(
+            _OptionsRow<ThemeMode>(
               title: text('Color mode', '颜色模式'),
               options: [
-                (false, text('Light', '浅色')),
-                (true, text('Dark', '深色')),
+                (ThemeMode.system, text('System', '跟随系统')),
+                (ThemeMode.light, text('Light', '浅色')),
+                (ThemeMode.dark, text('Dark', '深色')),
               ],
-              value: appearance.dark,
-              onChanged: (value) => unawaited(appearance.setDark(value)),
+              value: appearance.themeMode,
+              onChanged: (value) => unawaited(appearance.setThemeMode(value)),
             ),
           ],
         ),
@@ -649,28 +650,21 @@ const _networkGlyph = Glyph([
 ]);
 
 class _PrismPage extends StatelessWidget {
-  const _PrismPage({
-    required this.title,
-    this.leading,
-    this.compact = false,
-    required this.body,
-  });
+  const _PrismPage({required this.title, required this.body});
 
   static final _barChanges = Listenable.merge(const []);
   static final _loading = ValueNotifier(false);
 
   final String title;
-  final Widget? leading;
-  final bool compact;
   final Widget body;
 
   @override
   Widget build(BuildContext context) => PrismScaffold(
     bar: ScaffoldBar(
-      isCompact: compact,
+      isCompact: false,
       listenable: _barChanges,
       loading: _loading,
-      builder: (context) => AppBar(leading: leading, title: Text(title)),
+      builder: (context) => AppBar(title: Text(title)),
     ),
     body: body,
   );

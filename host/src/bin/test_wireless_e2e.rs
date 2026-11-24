@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
 
     let frame: Vec<u8> = (0..60_000u32).map(|i| (i * 31 % 251) as u8).collect();
     video_tx
-        .send(VideoPacket { data: Arc::new(frame.clone()), pts_us: 42, is_keyframe: true, is_config: false, captured_at: Instant::now() })
+        .send(VideoPacket { data: Arc::new(frame.clone()), pts_us: 42, stream_size: (1800, 1200), is_keyframe: true, is_config: false, captured_at: Instant::now() })
         .await?;
     let got = loop {
         let (header, payload) = link.next().await?;

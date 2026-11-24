@@ -35,6 +35,7 @@ class _WindowsScreenState extends State<WindowsScreen> {
   int _destination = 0;
   bool _sidebarExpanded = true;
   bool _firstStatus = true;
+  bool? _windowDark;
   bool _clipboardFeedback = false;
   String? _error;
   int? _usbApprovalId;
@@ -57,18 +58,20 @@ class _WindowsScreenState extends State<WindowsScreen> {
   void initState() {
     super.initState();
     widget.appearance.addListener(_appearanceChanged);
-    _updateWindowTheme();
     unawaited(_start());
     _poller = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
   }
 
-  void _appearanceChanged() {
-    _updateWindowTheme();
-    setState(() {});
-  }
+  void _appearanceChanged() => setState(() {});
 
-  void _updateWindowTheme() =>
-      widget.host.setDashboardDark(widget.appearance.dark);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dark = p.Theme.brightnessOf(context) == Brightness.dark;
+    if (_windowDark == dark) return;
+    _windowDark = dark;
+    widget.host.setDashboardDark(dark);
+  }
 
   @override
   void dispose() {
@@ -633,39 +636,62 @@ class _WindowsScreenState extends State<WindowsScreen> {
     );
   }
 
+  Widget _sessionSummary() {
+    final status = _status!;
+    final width = status['width'] as int? ?? 0;
+    final height = status['height'] as int? ?? 0;
+    final hz = status['refresh_hz'] as int? ?? 0;
+    final fps = status['fps'] as int? ?? 0;
+    final kbps = status['bitrate_kbps'] as int? ?? 0;
+    final codec = status['codec'] as String?;
+    final portrait = switch (status['orientation']) {
+      'portrait' => true,
+      'landscape' => false,
+      _ => height > width,
+    };
+    return _section(t('Current session', '当前会话'), [
+      _row(
+        _mirroring
+            ? t('Primary display', '主显示器')
+            : t('Virtual display', '虚拟显示器'),
+        glyph: _WindowsGlyphs.display,
+        value: '$width × $height · $hz Hz',
+      ),
+      _row(
+        t('Orientation', '显示方向'),
+        glyph: _WindowsGlyphs.refresh,
+        value: portrait ? t('Portrait', '纵向') : t('Landscape', '横向'),
+      ),
+      _row(
+        t('Video', '视频'),
+        glyph: _WindowsGlyphs.video,
+        value: [
+          ?codec,
+          '$fps fps',
+          '${(kbps / 1000).toStringAsFixed(1)} Mb/s',
+        ].join(' · '),
+      ),
+    ]);
+  }
+
   Widget _streamOptions() {
     if (_status == null) return const SizedBox.shrink();
-    final fps = _status?['fps'] as int? ?? 60;
+    final fps = _status?['manual_fps'] as int? ?? _status?['fps'] as int? ?? 60;
     final bitrate = _status?['manual_bitrate_kbps'] as int? ?? 0;
-    final hz = _status?['refresh_hz'] as int? ?? 0;
-    final width = _status?['width'] as int? ?? 0;
-    final height = _status?['height'] as int? ?? 0;
-    final codec = _status?['codec'];
-    final kbps = _status?['bitrate_kbps'] as int? ?? 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (_connected)
-          _section(t('Current session', '当前会话'), [
-            _row(
-              _mirroring
-                  ? t('Primary display', '主显示器')
-                  : t('Virtual display', '虚拟显示器'),
-              glyph: _WindowsGlyphs.display,
-              value: '$width × $height · $hz Hz',
-            ),
-            if (codec != null)
-              _row(
-                t('Video', '视频'),
-                glyph: _WindowsGlyphs.video,
-                value: '$codec · ${(kbps / 1000).toStringAsFixed(1)} Mb/s',
-              ),
-          ]),
+        if (_connected) _sessionSummary(),
         _section(t('Stream parameters', '串流参数'), [
           _option(
             t('Frame rate limit', '帧率上限'),
             fps,
-            const [(60, '60 Hz'), (90, '90 Hz'), (120, '120 Hz')],
+            [
+              (0, t('Follow display', '跟随显示器')),
+              (60, '60 Hz'),
+              (90, '90 Hz'),
+              (120, '120 Hz'),
+            ],
             (value) => _command('set_fps', value),
             glyph: _WindowsGlyphs.refresh,
           ),
@@ -811,9 +837,13 @@ class _WindowsScreenState extends State<WindowsScreen> {
             ),
             _option(
               t('Theme', '主题'),
-              appearance.dark,
-              [(false, t('Light', '浅色')), (true, t('Dark', '深色'))],
-              appearance.setDark,
+              appearance.themeMode,
+              [
+                (p.ThemeMode.system, t('System', '跟随系统')),
+                (p.ThemeMode.light, t('Light', '浅色')),
+                (p.ThemeMode.dark, t('Dark', '深色')),
+              ],
+              appearance.setThemeMode,
               glyph: _WindowsGlyphs.appearance,
             ),
           ]),
@@ -848,6 +878,7 @@ class _WindowsScreenState extends State<WindowsScreen> {
       secondary: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (_connected) _sessionSummary(),
           _section(t('Window', '窗口'), [
             _row(
               t('Hide to system tray', '隐藏到系统托盘'),

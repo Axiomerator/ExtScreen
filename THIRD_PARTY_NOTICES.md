@@ -13,8 +13,10 @@ Windows 便携 ZIP 中的驱动许可证位于 `support/driver/vdd/LICENSE.txt`�
 | 组件 | 用途 | 许可证 |
 | --- | --- | --- |
 | [Flutter SDK](https://github.com/flutter/flutter) | Windows 和安卓界面引擎 | [BSD-3-Clause](https://github.com/flutter/flutter/blob/main/LICENSE) |
-| [Prism UI 0.1.3](https://pub.dev/packages/prism_ui/versions/0.1.3) | 主题、控件与液态玻璃 | [GPL-3.0](https://pub.dev/packages/prism_ui/versions/0.1.3/license) |
+| [Prism UI 0.1.3 后续提交](ui/vendor/prism_ui/EXTSCREEN_UPSTREAM.md) | 主题、控件与液态玻璃 | [GPL-3.0](ui/vendor/prism_ui/LICENSE) 与 [上游声明](ui/vendor/prism_ui/NOTICE) |
 | Microsoft Visual C++ 可再发行运行库 | 运行 Flutter Windows 控制面板和后台主机 | [Microsoft Visual Studio 可再发行组件条款](https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files) |
+
+Prism UI 中的 HCT 色彩实现与 Flutter 墨迹着色器分别适用 [Apache 2.0](ui/vendor/prism_ui/licenses/Apache-2.0.txt) 和 [Flutter BSD-3-Clause](ui/vendor/prism_ui/licenses/Flutter-BSD-3-Clause.txt)。Android 和 Windows 的 Flutter 资源都包含这两份许可证、Prism UI 的 GPL 全文和声明。Windows 便携包在 `support/ui/vendor/prism_ui/` 中也提供可直接打开的副本。
 
 Flutter 构建产物中的 `flutter_assets/NOTICES.Z` 包含随包分发的 Dart 和 Flutter 依赖的许可证。
 

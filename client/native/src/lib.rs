@@ -3,7 +3,7 @@ pub mod discovery;
 pub mod handshake;
 pub mod transport;
 
-use jni::objects::{JClass, JFloatArray, JObject, JString};
+use jni::objects::{JClass, JFloatArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong};
 use jni::JNIEnv;
 use std::sync::OnceLock;
@@ -78,6 +78,11 @@ pub extern "system" fn Java_com_extscreen_NativeEngine_setSurface(
             None
         };
         get_client().set_surface(window);
+        // ANativeWindow_fromSurface returns its own reference. The decoder path retains a separate
+        // reference, while this one belongs to the JNI call and must also be released on rotation.
+        if let Some(window) = window {
+            unsafe { ndk_sys::ANativeWindow_release(window) };
+        }
     }
 }
 
@@ -308,6 +313,30 @@ pub extern "system" fn Java_com_extscreen_NativeEngine_sendKeyEvent(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_extscreen_NativeEngine_updateDisplay(
+    _env: JNIEnv,
+    _class: JClass,
+    width: jint,
+    height: jint,
+    max_refresh_hz: jint,
+) {
+    get_client().update_display(width as u32, height as u32, max_refresh_hz as u32);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_extscreen_NativeEngine_readStreamState(
+    env: JNIEnv,
+    _class: JClass,
+    out: JIntArray,
+) -> jboolean {
+    let Some(state) = get_client().stream_snapshot() else { return 0 };
+    if env.get_array_length(&out).unwrap_or_default() < state.len() as i32 {
+        return 0;
+    }
+    env.set_int_array_region(&out, 0, &state).is_ok() as jboolean
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_extscreen_NativeEngine_updateStreamSettings(
     _env: JNIEnv,
     _class: JClass,
@@ -320,7 +349,12 @@ pub extern "system" fn Java_com_extscreen_NativeEngine_updateStreamSettings(
         0 => None,
         b => Some(b as u32),
     };
-    get_client().update_stream_settings(target_fps.max(0) as u32, bitrate);
+    let fps = match target_fps {
+        n if n < 0 => Some(0),
+        0 => None,
+        n => Some(n as u32),
+    };
+    get_client().update_stream_settings(fps, bitrate);
 }
 
 #[no_mangle]

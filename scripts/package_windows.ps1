@@ -17,7 +17,11 @@ $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPat
 
 foreach ($file in @(
     'extscreen.exe', 'flutter_windows.dll', 'data\app.so', 'data\icudtl.dat',
-    'data\flutter_assets\NOTICES.Z', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'
+    'data\flutter_assets\NOTICES.Z', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
+    'data\flutter_assets\packages\prism_ui\LICENSE',
+    'data\flutter_assets\packages\prism_ui\NOTICE',
+    'data\flutter_assets\packages\prism_ui\licenses\Apache-2.0.txt',
+    'data\flutter_assets\packages\prism_ui\licenses\Flutter-BSD-3-Clause.txt'
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $dashboard $file) -PathType Leaf)) {
         throw "Missing Windows dashboard bundle file: $file"
@@ -61,6 +65,9 @@ try {
         Add-ZipFile $archive (Join-Path $root 'docs\WINDOWS_QUICK_START.txt') '开始使用.txt'
         foreach ($relative in @(
             'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'ARCHITECTURE.md', 'DESIGN.md',
+            'ui\vendor\prism_ui\LICENSE', 'ui\vendor\prism_ui\NOTICE', 'ui\vendor\prism_ui\EXTSCREEN_UPSTREAM.md',
+            'ui\vendor\prism_ui\licenses\Apache-2.0.txt',
+            'ui\vendor\prism_ui\licenses\Flutter-BSD-3-Clause.txt',
             'host\assets\extscreen-512.png', 'driver\README.md', 'driver\vdd_settings.xml',
             'driver\setup_portable.ps1', 'ExtScreen-Display-Driver-Setup.cmd',
             'ExtScreen-USB-Tethering-Setup.cmd', 'scripts\setup_usb_tethering.ps1',

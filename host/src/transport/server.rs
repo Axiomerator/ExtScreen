@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -19,8 +19,8 @@ use crate::input::{cursor_tracker::CursorSample, spawn_cursor_tracker};
 use crate::shared::{HighResTimerGuard, HostShared, LinkKind, SessionInfo};
 use extscreen_common::input::{KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
-    flags, msg_types, ClientHello, ControlMessage, PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO,
-    HEADER_SIZE,
+    flags, msg_types, ClientHello, ControlMessage, DisplayOrientation, DisplayRequest, PacketHeader,
+    ServerConfig, StreamState, VideoCodec, BITRATE_AUTO, HEADER_SIZE,
 };
 use extscreen_common::DeviceSecret;
 
@@ -352,7 +352,7 @@ async fn run_session(
     ctrl_tx: mpsc::Sender<ControlMessage>,
     ctrl_rx: mpsc::Receiver<ControlMessage>,
 ) {
-    let Ok(_display_use) = shared.display_use.try_acquire() else {
+    let Ok(display_use) = shared.display_use.clone().try_acquire_owned() else {
         info!("Deferring incoming tablet while display driver setup is running");
         return;
     };
@@ -364,13 +364,19 @@ async fn run_session(
     } else {
         LinkKind::Wifi
     };
-    SESSION_EPOCH.fetch_add(1, Ordering::SeqCst);
+    let epoch = SESSION_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     let _guard = SessionGuard::new(shared.clone());
     info!("Android client '{}' connected from {peer} via {:?}", hello.device_name, link_kind);
 
-    let attach_shared = shared.clone();
-    let (panel_hz, panel_w, panel_h) = (hello.max_refresh_rate, hello.screen_width, hello.screen_height);
-    let _ = tokio::task::spawn_blocking(move || show_tablet_display(&attach_shared, panel_hz, panel_w, panel_h)).await;
+    let panel = DisplayRequest {
+        orientation: DisplayOrientation::from_dimensions(hello.screen_width, hello.screen_height),
+        panel_width: hello.screen_width,
+        panel_height: hello.screen_height,
+        max_refresh_hz: hello.max_refresh_rate,
+    };
+    let fps = shared.requested_fps(panel.max_refresh_hz);
+    let display_use = Arc::new(display_use);
+    update_tablet_display(shared.clone(), display_use.clone(), epoch, panel, fps).await;
 
     // Drain any stale video packets so the newly connected client receives zero queue lag
     {
@@ -386,8 +392,16 @@ async fn run_session(
     let (cursor_tx, cursor_rx) = watch::channel::<Option<CursorSample>>(None);
 
     let _cursor_task = AbortOnDrop(spawn_cursor_tracker(shared.clone(), cursor_tx));
-    let mut rx_task = AbortOnDrop(tokio::spawn(receive_loop(reader, shared.clone(), ctrl_tx, hello, new_secret, link_kind)));
-    let mut tx_task = AbortOnDrop(tokio::spawn(send_loop(writer, shared.clone(), video_rx, ctrl_rx, cursor_rx)));
+    let (panel_tx, panel_rx) = watch::channel(None);
+    let mut rx_task = AbortOnDrop(tokio::spawn(receive_loop(
+        reader, shared.clone(), ctrl_tx, hello, new_secret, link_kind, panel_tx,
+    )));
+    let mut tx_task = AbortOnDrop(tokio::spawn(send_loop(
+        writer, shared.clone(), video_rx, ctrl_rx, cursor_rx, panel_rx.clone(),
+    )));
+    let _settings_task = AbortOnDrop(tokio::spawn(display_settings_loop(
+        shared, Arc::downgrade(&display_use), epoch, panel, fps, link_kind, panel_rx,
+    )));
 
     tokio::select! {
         _ = &mut rx_task.0 => info!("Client receiver task ended (client disconnected)"),
@@ -395,14 +409,77 @@ async fn run_session(
     }
 }
 
-/// Puts the tablet's monitor back on the desktop and records its (new) geometry.
-fn show_tablet_display(shared: &HostShared, panel_hz: u32, panel_w: u32, panel_h: u32) {
-    if !virtual_display::attach(panel_hz, panel_w, panel_h) {
-        return;
-    }
-    match find_virtual_display(Duration::from_secs(3)) {
-        Some(info) => *shared.display.lock().unwrap_or_else(|e| e.into_inner()) = info,
-        None => warn!("Tablet display attached but Windows has not listed it yet"),
+/// Keeps display reconfiguration off the transport read/write tasks.
+async fn update_tablet_display(
+    shared: Arc<HostShared>,
+    display_use: Arc<OwnedSemaphorePermit>,
+    epoch: u64,
+    panel: DisplayRequest,
+    fps: u32,
+) {
+    let _ = tokio::task::spawn_blocking(move || {
+        // A canceled session must keep excluding driver operations until this call returns.
+        let _display_use = display_use;
+        let current = || SESSION_EPOCH.load(Ordering::SeqCst) == epoch;
+        if !virtual_display::attach(
+            fps, panel.panel_width, panel.panel_height, panel.orientation, current,
+        ) {
+            return;
+        }
+        match find_virtual_display(Duration::from_secs(3)) {
+            Some(info) if current() => {
+                let mut display = shared.display.lock().unwrap_or_else(|e| e.into_inner());
+                let size_changed = display.stream_size() != info.stream_size();
+                *display = info;
+                let mut injector = shared.injector.lock().unwrap_or_else(|e| e.into_inner());
+                if size_changed {
+                    injector.release_all();
+                }
+                injector.set_monitor_rect(info.left, info.top, info.width, info.height);
+            }
+            Some(_) => {}
+            None => warn!("Tablet display attached but Windows has not listed it yet"),
+        }
+    }).await;
+}
+
+async fn display_settings_loop(
+    shared: Arc<HostShared>,
+    display_use: Weak<OwnedSemaphorePermit>,
+    epoch: u64,
+    mut panel: DisplayRequest,
+    mut fps: u32,
+    link_kind: LinkKind,
+    panel_rx: watch::Receiver<Option<DisplayRequest>>,
+) {
+    let link = match link_kind {
+        LinkKind::UsbCable | LinkKind::UsbTether => Link::Usb,
+        LinkKind::Wifi => Link::Network,
+    };
+    let mut interval = tokio::time::interval(Duration::from_millis(125));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut size = shared.stream_state();
+    loop {
+        interval.tick().await;
+        if !shared.client_connected.load(Ordering::Relaxed) {
+            continue;
+        }
+        let next_panel = panel_rx.borrow().unwrap_or(panel);
+        let next_fps = shared.requested_fps(next_panel.max_refresh_hz);
+        if (next_panel, next_fps) != (panel, fps) {
+            let Some(display_use) = display_use.upgrade() else { break };
+            (panel, fps) = (next_panel, next_fps);
+            update_tablet_display(shared.clone(), display_use, epoch, panel, fps).await;
+        }
+        let next = shared.stream_state();
+        let effective_fps = fps.min(next.refresh_hz.clamp(30, 144));
+        let rate_changed = shared.target_fps.swap(effective_fps, Ordering::Relaxed) != effective_fps;
+        if rate_changed || (size.stream_width, size.stream_height) != (next.stream_width, next.stream_height) {
+            shared.stream_rate_changed(link);
+            shared.reconfigure_encoder.store(true, Ordering::Relaxed);
+            shared.request_idr.store(true, Ordering::Relaxed);
+        }
+        size = next;
     }
 }
 
@@ -429,7 +506,8 @@ fn apply_hello(shared: &HostShared, hello: &ClientHello, link_kind: LinkKind) ->
 
     // Stream at the rate the virtual monitor runs at (the tablet's panel rate), so frames are
     // produced on the same clock the panel refreshes on.
-    shared.target_fps.store(active_disp.stream_fps(), Ordering::Relaxed);
+    let fps = shared.requested_fps(hello.max_refresh_rate).min(active_disp.stream_fps());
+    shared.target_fps.store(fps, Ordering::Relaxed);
 
     let tablet_ratio = hello.screen_width as f32 / hello.screen_height.max(1) as f32;
     let current_ratio = active_disp.width as f32 / active_disp.height.max(1) as f32;
@@ -499,6 +577,7 @@ async fn receive_loop(
     hello: ClientHello,
     new_secret: Option<DeviceSecret>,
     link_kind: LinkKind,
+    panel_tx: watch::Sender<Option<DisplayRequest>>,
 ) {
     let mut events: Vec<PointerEvent> = Vec::with_capacity(256);
 
@@ -528,46 +607,19 @@ async fn receive_loop(
                 let reply = match ctrl {
                     ControlMessage::UpdateStreamSettings(update) => {
                         info!("Received runtime stream settings update from tablet: {:?}", update);
-                        // The stream rate is the monitor's rate (see `display_hz_for`): switch the
-                        // virtual monitor first, off the async threads since it reconfigures the display.
                         if let Some(fps) = update.target_fps {
-                            let fps = fps.clamp(30, 144);
-                            let current_hz = shared.display.lock().unwrap_or_else(|e| e.into_inner()).refresh_hz;
-                            if virtual_display::display_hz_for(fps) != current_hz {
-                                let display_shared = shared.clone();
-                                let (panel_w, panel_h) = (hello.screen_width, hello.screen_height);
-                                let _ = tokio::task::spawn_blocking(move || show_tablet_display(&display_shared, fps, panel_w, panel_h)).await;
-                            }
+                            shared.choose_fps(fps);
                         }
-                        let mut d = shared.display.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(fresh) = monitor_rect(d.hmonitor, d.refresh_hz) {
-                            *d = fresh;
-                        }
-                        if let Some(fps) = update.target_fps {
-                            let clamped_fps = fps.clamp(30, 144);
-                            d.refresh_hz = clamped_fps;
-                            shared.target_fps.store(clamped_fps, Ordering::Relaxed);
-                        }
-                        drop(d);
-                        let link = match link_kind {
-                            LinkKind::UsbCable | LinkKind::UsbTether => Link::Usb,
-                            LinkKind::Wifi => Link::Network,
-                        };
                         match update.bitrate_kbps {
                             Some(BITRATE_AUTO) => shared.choose_auto_bitrate(),
                             Some(kbps) => shared.choose_bitrate_kbps(kbps.clamp(MIN_KBPS, MAX_MANUAL_KBPS)),
                             None => {}
                         }
-                        // In auto mode the ceiling follows the new rate (a no-op when fixed).
-                        if update.target_fps.is_some() {
-                            shared.stream_rate_changed(link);
-                        }
-                        let d = *shared.display.lock().unwrap_or_else(|e| e.into_inner());
-                        shared.reconfigure_encoder.store(true, Ordering::Relaxed);
-                        shared.request_idr.store(true, Ordering::Relaxed);
-
-                        let codec = *shared.active_codec.lock().unwrap_or_else(|e| e.into_inner());
-                        Some(ControlMessage::ServerConfig(stream_config(&shared, &d, codec)))
+                        None
+                    }
+                    ControlMessage::SetDisplayOrientation(panel) if panel.is_valid() => {
+                        panel_tx.send_replace(Some(panel));
+                        None
                     }
                     ControlMessage::KeyframeRequest => {
                         info!("Tablet requested immediate IDR keyframe");
@@ -630,6 +682,19 @@ async fn send_control(
     writer.send(hdr, &bytes).await
 }
 
+async fn send_stream_config(
+    writer: &mut PacketWriter<OwnedWriteHalf>,
+    seq: &mut u32,
+    config: &mut ServerConfig,
+    state: StreamState,
+) -> std::io::Result<()> {
+    config.stream_width = state.stream_width;
+    config.stream_height = state.stream_height;
+    config.target_fps = state.target_fps;
+    config.bitrate_kbps = state.bitrate_kbps;
+    send_control(writer, seq, &ControlMessage::ServerConfig(config.clone())).await
+}
+
 /// Task 2: Video stream transmitter (raw NAL payload)
 async fn send_loop(
     mut writer: PacketWriter<OwnedWriteHalf>,
@@ -637,6 +702,7 @@ async fn send_loop(
     video_rx: Arc<Mutex<mpsc::Receiver<VideoPacket>>>,
     mut ctrl_rx: mpsc::Receiver<ControlMessage>,
     mut cursor_rx: watch::Receiver<Option<CursorSample>>,
+    panel_rx: watch::Receiver<Option<DisplayRequest>>,
 ) {
     let mut frame_seq = 0u32;
     let mut cursor_seq = 0u32;
@@ -646,7 +712,7 @@ async fn send_loop(
     let mut video_rx = video_rx.lock_owned().await;
 
     // Step 1: Deliver the pairing secret (if any) and the initial ServerConfig before any video.
-    let initial_config = loop {
+    let mut config = loop {
         let Some(msg) = ctrl_rx.recv().await else { return };
         if let Err(e) = send_control(&mut writer, &mut ctrl_seq, &msg).await {
             warn!("Failed to write initial control message: {e}");
@@ -661,9 +727,9 @@ async fn send_loop(
     // negotiated stream so a newly connected tablet gets an instant picture without codec mismatch.
     let cached = shared.latest_idr.lock().ok().and_then(|g| g.clone());
     if let Some(idr) = cached.filter(|c| {
-        c.codec == initial_config.codec
-            && c.width == initial_config.stream_width
-            && c.height == initial_config.stream_height
+        c.codec == config.codec
+            && c.width == config.stream_width
+            && c.height == config.stream_height
     }) {
         let mut flag = flags::KEYFRAME;
         if idr.packet.is_config {
@@ -683,11 +749,15 @@ async fn send_loop(
         }
     }
 
+    let mut telemetry = tokio::time::interval(Duration::from_millis(125));
+    telemetry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut sent_state = None;
+    let mut manual = shared.manual_bitrate_kbps.load(Ordering::Relaxed);
     loop {
         tokio::select! {
             biased;
 
-            // Priority 1: control messages (ServerConfig, Pong, SessionTaken)
+            // Priority 1: control messages (Pong, SessionTaken)
             Some(msg) = ctrl_rx.recv() => {
                 let end_session = matches!(msg, ControlMessage::SessionTaken { .. });
                 if let Err(e) = send_control(&mut writer, &mut ctrl_seq, &msg).await {
@@ -696,6 +766,30 @@ async fn send_loop(
                 }
                 if end_session {
                     break;
+                }
+            }
+
+            _ = telemetry.tick() => {
+                let state = shared.stream_state();
+                if (state.stream_width, state.stream_height) != (config.stream_width, config.stream_height) {
+                    // Wait for the first keyframe before publishing the new coded geometry.
+                    continue;
+                }
+                if state.target_fps != config.target_fps || state.manual_bitrate_kbps != manual {
+                    if let Err(error) = send_stream_config(&mut writer, &mut ctrl_seq, &mut config, state).await {
+                        warn!("Error updating stream configuration: {error}");
+                        break;
+                    }
+                    manual = state.manual_bitrate_kbps;
+                }
+                // An orientation report also identifies a peer that understands StreamState.
+                let supports_state = panel_rx.borrow().is_some();
+                if supports_state && sent_state != Some(state) {
+                    if let Err(error) = send_control(&mut writer, &mut ctrl_seq, &ControlMessage::StreamState(state)).await {
+                        warn!("Error writing stream settings: {error}");
+                        break;
+                    }
+                    sent_state = Some(state);
                 }
             }
 
@@ -742,6 +836,23 @@ async fn send_loop(
                     error!("Capture pipeline closed the video channel");
                     break;
                 };
+
+                let configured_size = (config.stream_width, config.stream_height);
+                if pkt.stream_size != configured_size {
+                    let state = shared.stream_state();
+                    if pkt.stream_size != (state.stream_width, state.stream_height) {
+                        continue;
+                    }
+                    if !pkt.is_keyframe {
+                        shared.request_idr.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+                    if let Err(error) = send_stream_config(&mut writer, &mut ctrl_seq, &mut config, state).await {
+                        warn!("Error configuring decoder for changed display: {error}");
+                        break;
+                    }
+                    manual = state.manual_bitrate_kbps;
+                }
 
                 let mut flag = flags::NONE;
                 if pkt.is_config {

@@ -7,12 +7,14 @@ import 'package:flutter/widgets.dart';
 import 'package:prism_ui/prism_ui.dart' as prism;
 
 class AppearanceController extends ChangeNotifier {
-  AppearanceController._(this._chinese, this._dark, {bool persist = true})
+  AppearanceController._(this._chinese, this._themeMode, {bool persist = true})
     : _persist = persist;
 
   @visibleForTesting
-  AppearanceController.inMemory({bool chinese = false, bool dark = false})
-    : this._(chinese, dark, persist: false);
+  AppearanceController.inMemory({
+    bool chinese = false,
+    prism.ThemeMode themeMode = prism.ThemeMode.system,
+  }) : this._(chinese, themeMode, persist: false);
 
   static const _android = MethodChannel('extscreen/appearance');
   static File get _windows => File(
@@ -22,10 +24,10 @@ class AppearanceController extends ChangeNotifier {
 
   final bool _persist;
   bool _chinese;
-  bool _dark;
+  prism.ThemeMode _themeMode;
 
   bool get chinese => _chinese;
-  bool get dark => _dark;
+  prism.ThemeMode get themeMode => _themeMode;
 
   static Future<AppearanceController> load() async {
     final platform = WidgetsBinding.instance.platformDispatcher;
@@ -47,11 +49,31 @@ class AppearanceController extends ChangeNotifier {
       // Recover by overwriting malformed preferences on the next change.
     }
     final language = saved['language'] ?? platform.locale.languageCode;
-    final dark = saved['dark'];
-    return AppearanceController._(
-      language == 'zh',
-      dark is bool ? dark : platform.platformBrightness == Brightness.dark,
-    );
+    return AppearanceController._(language == 'zh', themeModeFrom(saved));
+  }
+
+  @visibleForTesting
+  static prism.ThemeMode themeModeFrom(Map<Object?, Object?> saved) =>
+      switch (saved['themeMode']) {
+        'light' => prism.ThemeMode.light,
+        'dark' => prism.ThemeMode.dark,
+        'system' => prism.ThemeMode.system,
+        _ => switch (saved['dark']) {
+          true => prism.ThemeMode.dark,
+          false => prism.ThemeMode.light,
+          _ => prism.ThemeMode.system,
+        },
+      };
+
+  static Future<void> applyAndroidSystemBars(Brightness brightness) async {
+    try {
+      await _android.invokeMethod<void>(
+        'setEffectiveDark',
+        brightness == Brightness.dark,
+      );
+    } on MissingPluginException {
+      // This engine may have no native appearance channel.
+    }
   }
 
   Future<void> setChinese(bool value) async {
@@ -66,13 +88,13 @@ class AppearanceController extends ChangeNotifier {
     }
   }
 
-  Future<void> setDark(bool value) async {
-    if (_dark == value) return;
-    _dark = value;
+  Future<void> setThemeMode(prism.ThemeMode value) async {
+    if (_themeMode == value) return;
+    _themeMode = value;
     notifyListeners();
     if (!_persist) return;
     if (Platform.isAndroid) {
-      await _android.invokeMethod<void>('setDark', value);
+      await _android.invokeMethod<void>('setThemeMode', value.name);
     } else if (Platform.isWindows) {
       _saveWindows();
     }
@@ -83,7 +105,10 @@ class AppearanceController extends ChangeNotifier {
     dest.parent.createSync(recursive: true);
     final temporary = File('${dest.path}.tmp');
     temporary.writeAsStringSync(
-      jsonEncode({'language': _chinese ? 'zh' : 'en', 'dark': _dark}),
+      jsonEncode({
+        'language': _chinese ? 'zh' : 'en',
+        'themeMode': _themeMode.name,
+      }),
     );
     temporary.renameSync(dest.path);
   }

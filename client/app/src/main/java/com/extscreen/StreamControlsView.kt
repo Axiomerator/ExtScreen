@@ -13,13 +13,15 @@ import io.flutter.embedding.android.FlutterView
 internal class StreamControlsView(context: Context) : FlutterView(
     context, FlutterTextureView(context).apply { isOpaque = false }
 ) {
-    var modal = false
-        private set
+    val hasOpenControls: Boolean get() = modal || popupOpen
+    private var modal = false
+    private var popupOpen = false
     private var areas = emptyList<RectF>()
     private var controlGesture = false
 
-    fun setHitAreas(modal: Boolean, rectangles: List<RectF>) {
+    fun setHitAreas(modal: Boolean, popupOpen: Boolean, rectangles: List<RectF>) {
         this.modal = modal
+        this.popupOpen = popupOpen
         areas = rectangles
     }
 

@@ -60,6 +60,15 @@ object NativeEngine {
     /** Hosts currently announcing themselves: one `ip|port|name|hostIdHex|usb|wifi` per line. */
     external fun getDiscoveredHosts(): String
 
+    /** Update the active host display request and next reconnect's hello, while keeping the socket. */
+    external fun updateDisplay(width: Int, height: Int, maxRefreshHz: Int)
+
+    /**
+     * Host width, height, refresh, FPS target, bitrate, manual bitrate (-1 if unknown),
+     * orientation (1 landscape, 2 portrait), codec. False until a host config arrives.
+     */
+    external fun readStreamState(out: IntArray): Boolean
+
     external fun getSentPacketsCount(): Long
     external fun getRoundTripLatencyUs(): Long
 
@@ -90,7 +99,9 @@ object NativeEngine {
     /** `bitrateKbps` for [updateStreamSettings]: let the host pick and adapt the bitrate. */
     const val BITRATE_AUTO = -1
 
-    /** `targetFps`/`bitrateKbps` of 0 leave that setting unchanged. */
+    const val FPS_AUTO = -1
+
+    /** A zero argument keeps that setting. The corresponding AUTO constant selects auto. */
     external fun updateStreamSettings(
         targetFps: Int,
         bitrateKbps: Int

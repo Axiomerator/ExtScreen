@@ -10,8 +10,8 @@ use crate::decoder::{raise_thread_priority, supports_hardware_hevc, MediaCodecDe
 use crate::handshake::{client_handshake, HandshakeError};
 use extscreen_common::input::{actions, KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
-    flags, msg_types, valid_cursor_image, ClientHello, ControlMessage, CursorEvent, PacketHeader,
-    StreamSettingsUpdate, VideoCodec,
+    flags, msg_types, valid_cursor_image, ClientHello, ControlMessage, CursorEvent, DisplayOrientation,
+    DisplayRequest, PacketHeader, ServerConfig, StreamSettingsUpdate, StreamState, VideoCodec,
     HEADER_SIZE, PROTOCOL_VERSION,
 };
 use extscreen_common::{hex, ClientId, DeviceSecret, HostId, Opener, Sealer, TAG_LEN};
@@ -43,6 +43,62 @@ pub struct ClientConfig {
     pub pin: Option<String>,
     /// Per-host secrets issued by earlier pairings.
     pub credentials: Vec<(HostId, DeviceSecret)>,
+}
+
+impl ClientConfig {
+    fn display_request(&self) -> DisplayRequest {
+        DisplayRequest {
+            orientation: orientation_of(self.screen_width, self.screen_height),
+            panel_width: self.screen_width,
+            panel_height: self.screen_height,
+            max_refresh_hz: self.max_refresh_rate,
+        }
+    }
+}
+
+fn orientation_of(width: u32, height: u32) -> DisplayOrientation {
+    if height > width {
+        DisplayOrientation::Portrait
+    } else {
+        DisplayOrientation::Landscape
+    }
+}
+
+#[derive(Default)]
+struct StreamTelemetry {
+    config: Option<ServerConfig>,
+    current: Option<StreamState>,
+}
+
+impl StreamTelemetry {
+    fn snapshot(&self) -> Option<[i32; 8]> {
+        let config = self.config.as_ref()?;
+        let (width, height, hz, fps, bitrate, manual, orientation) = match self.current {
+            Some(state) => (
+                state.stream_width, state.stream_height, state.refresh_hz, state.target_fps,
+                state.bitrate_kbps, state.manual_bitrate_kbps as i32, state.orientation
+            ),
+            // The original ServerConfig gives actual encoded geometry and target rates.
+            // Older hosts don't separately report monitor Hz or whether bitrate is automatic.
+            None => (
+                config.stream_width, config.stream_height, 0, config.target_fps,
+                config.bitrate_kbps, -1, orientation_of(config.stream_width, config.stream_height)
+            ),
+        };
+        Some([
+            width as i32,
+            height as i32,
+            hz as i32,
+            fps as i32,
+            bitrate as i32,
+            manual,
+            match orientation {
+                DisplayOrientation::Landscape => 1,
+                DisplayOrientation::Portrait => 2,
+            },
+            config.codec as i32,
+        ])
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -207,6 +263,7 @@ pub struct TransportClient {
     decoder: Arc<Mutex<Option<MediaCodecDecoder>>>,
     /// Stream size announced by the host in `ServerConfig`; the decoder is configured with it.
     stream_size: Arc<Mutex<(u32, u32)>>,
+    telemetry: Arc<Mutex<StreamTelemetry>>,
     /// Active video codec agreed upon with the host.
     active_codec: Arc<Mutex<VideoCodec>>,
     /// Latest decoupled hardware cursor state received from host (lock-free atomic).
@@ -419,6 +476,7 @@ impl TransportClient {
             surface_window: Arc::new(Mutex::new(None)),
             decoder: Arc::new(Mutex::new(None)),
             stream_size: Arc::new(Mutex::new(DEFAULT_STREAM_SIZE)),
+            telemetry: Arc::new(Mutex::new(StreamTelemetry::default())),
             active_codec: Arc::new(Mutex::new(VideoCodec::H264)),
             cursor_state: Arc::new(AtomicCursorState::default()),
             need_idr: Arc::new(AtomicBool::new(false)),
@@ -488,6 +546,7 @@ impl TransportClient {
             surface_window: self.surface_window.clone(),
             decoder: self.decoder.clone(),
             stream_size: self.stream_size.clone(),
+            telemetry: self.telemetry.clone(),
             active_codec: self.active_codec.clone(),
             cursor_state: self.cursor_state.clone(),
             need_idr: self.need_idr.clone(),
@@ -566,13 +625,40 @@ impl TransportClient {
         self.outbox.push_key(event);
     }
 
-    /// `target_fps` 0 keeps the rate; `bitrate_kbps` `None` keeps the bitrate.
-    pub fn update_stream_settings(&self, target_fps: u32, bitrate_kbps: Option<u32>) {
-        let msg = ControlMessage::UpdateStreamSettings(StreamSettingsUpdate {
-            target_fps: if target_fps > 0 { Some(target_fps) } else { None },
-            bitrate_kbps,
-        });
-        self.outbox.push_control(msg);
+    /// `None` keeps a setting and `Some(0)` makes it automatic.
+    pub fn update_stream_settings(&self, target_fps: Option<u32>, bitrate_kbps: Option<u32>) {
+        self.outbox.push_control(ControlMessage::UpdateStreamSettings(StreamSettingsUpdate {
+            target_fps, bitrate_kbps,
+        }));
+    }
+
+    pub fn update_display(&self, width: u32, height: u32, max_refresh_hz: u32) {
+        let request = DisplayRequest {
+            orientation: orientation_of(width, height),
+            panel_width: width,
+            panel_height: height,
+            max_refresh_hz,
+        };
+        if !request.is_valid() {
+            return;
+        }
+        let mut guard = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(config) = guard.as_mut() else { return };
+        if config.display_request() == request {
+            return;
+        }
+        // Keep the running connection. The next hello will use the same updated geometry.
+        config.screen_width = width;
+        config.screen_height = height;
+        config.max_refresh_rate = max_refresh_hz;
+        self.outbox.push_control(ControlMessage::SetDisplayOrientation(request));
+    }
+
+    pub fn stream_snapshot(&self) -> Option<[i32; 8]> {
+        if self.get_status() != STATUS_CONNECTED {
+            return None;
+        }
+        self.telemetry.lock().ok()?.snapshot()
     }
 
     pub fn queue_scroll_event(&self, delta_y: f32) {
@@ -605,6 +691,7 @@ struct Link {
     surface_window: Arc<Mutex<Option<NativeWindowHolder>>>,
     decoder: Arc<Mutex<Option<MediaCodecDecoder>>>,
     stream_size: Arc<Mutex<(u32, u32)>>,
+    telemetry: Arc<Mutex<StreamTelemetry>>,
     active_codec: Arc<Mutex<VideoCodec>>,
     cursor_state: Arc<AtomicCursorState>,
     need_idr: Arc<AtomicBool>,
@@ -656,6 +743,9 @@ impl Link {
             };
 
             self.status.store(STATUS_CONNECTING, Ordering::SeqCst);
+            if let Ok(mut telemetry) = self.telemetry.lock() {
+                *telemetry = StreamTelemetry::default();
+            }
             let addr_str = format!("{}:{}", config.host, config.port);
             log::info!("Attempting connection to Windows Host at {}...", addr_str);
 
@@ -767,6 +857,16 @@ impl Link {
             // Clear stale queued inputs/cursor from any previous session and synchronize the
             // decoder on an IDR before accepting video from this new connection.
             self.outbox.clear_session_inputs();
+            {
+                let guard = self.config.lock().unwrap_or_else(|e| e.into_inner());
+                if self.config_gen.load(Ordering::SeqCst) != generation {
+                    continue;
+                }
+                if let Some(config) = guard.as_ref() {
+                    // Send the latest geometry, including changes while authentication was pending.
+                    self.outbox.push_control(ControlMessage::SetDisplayOrientation(config.display_request()));
+                }
+            }
             self.cursor_state.hide();
             if let Ok(mut dec_guard) = self.decoder.lock() {
                 if let Some(dec) = dec_guard.as_mut() {
@@ -843,6 +943,7 @@ impl Link {
         #[allow(unused_variables)]
         let rx_codec = self.active_codec.clone();
         let rx_cursor = self.cursor_state.clone();
+        let telemetry = self.telemetry.clone();
         let rx_credential = self.new_credential.clone();
         let rx_config = self.config.clone();
         let rx_config_gen = self.config_gen.clone();
@@ -1013,6 +1114,9 @@ impl Link {
                                         "Host confirmed stream config: {}x{} @ {}Hz ({} kbps, codec: {:?})",
                                         cfg.stream_width, cfg.stream_height, cfg.target_fps, cfg.bitrate_kbps, cfg.codec
                                     );
+                                    if let Ok(mut report) = telemetry.lock() {
+                                        report.config = Some(cfg.clone());
+                                    }
                                     let new_size = (cfg.stream_width, cfg.stream_height);
                                     let size_changed = rx_stream_size
                                         .lock()
@@ -1035,6 +1139,11 @@ impl Link {
                                     }
                                     #[cfg(not(target_os = "android"))]
                                     let _ = changed;
+                                }
+                                ControlMessage::StreamState(state) => {
+                                    if let Ok(mut report) = telemetry.lock() {
+                                        report.current = Some(state);
+                                    }
                                 }
                                 _ => {}
                             }

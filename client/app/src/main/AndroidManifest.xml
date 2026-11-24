@@ -45,7 +45,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             tools:ignore="DiscouragedApi">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />

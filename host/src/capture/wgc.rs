@@ -36,6 +36,8 @@ pub struct VideoPacket {
     /// Annex-B access unit. Shared so caching a keyframe does not copy it.
     pub data: Arc<Vec<u8>>,
     pub pts_us: u64,
+    /// Coded geometry, used to order decoder configuration and frames during live rotation.
+    pub stream_size: (u32, u32),
     pub is_keyframe: bool,
     pub is_config: bool,
     /// When the frame reached the capture callback (for capture->wire latency stats).
@@ -438,6 +440,7 @@ impl EncoderState {
                     packet: VideoPacket {
                         data: data.clone(),
                         pts_us,
+                        stream_size: self.encoder_size,
                         is_keyframe: true,
                         is_config,
                         captured_at,
@@ -459,6 +462,7 @@ impl EncoderState {
         let pkt = VideoPacket {
             data,
             pts_us,
+            stream_size: self.encoder_size,
             is_keyframe: info.has_idr,
             is_config,
             captured_at,

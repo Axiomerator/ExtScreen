@@ -6,7 +6,7 @@ use crate::capture::{bitrate_for, ActiveDisplayInfo, VideoPacket};
 use crate::input::{KeyboardInjector, PointerInjector};
 use crate::stats::PipelineStats;
 use crate::transport::PairingStore;
-use extscreen_common::protocol::VideoCodec;
+use extscreen_common::protocol::{DisplayOrientation, StreamState, VideoCodec};
 
 /// Attaches the calling thread to the interactive `"Default"` desktop once per thread.
 /// Caching per thread avoids both kernel handle leaks and repeated syscalls on the 240 Hz
@@ -143,6 +143,8 @@ pub struct HostShared {
     pub is_running: AtomicBool,
     pub display: Mutex<ActiveDisplayInfo>,
     pub target_fps: AtomicU32,
+    /// Requested by Windows or Android. Zero follows the tablet's advertised panel rate.
+    preferred_fps: AtomicU32,
     pub target_bitrate_kbps: AtomicU32,
     pub reconfigure_encoder: AtomicBool,
     pub active_codec: Mutex<VideoCodec>,
@@ -187,6 +189,7 @@ impl HostShared {
             is_running: AtomicBool::new(true),
             display: Mutex::new(display),
             target_fps: AtomicU32::new(default_fps),
+            preferred_fps: AtomicU32::new(0),
             target_bitrate_kbps: AtomicU32::new(default_kbps),
             reconfigure_encoder: AtomicBool::new(false),
             active_codec: Mutex::new(default_codec),
@@ -200,16 +203,35 @@ impl HostShared {
         }
     }
 
-    /// Applies an explicit FPS choice from the dashboard.
+    /// Records the shared preference. The live session applies it to the monitor and encoder.
     pub fn choose_fps(&self, fps: u32) {
-        let clamped = fps.clamp(30, 144);
-        self.target_fps.store(clamped, Ordering::Relaxed);
-        let link = self.session.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|s| s.link());
-        if let Some(link) = link {
-            self.stream_rate_changed(link);
+        let fps = if fps == 0 { 0 } else { fps.clamp(30, 144) };
+        self.preferred_fps.store(fps, Ordering::Relaxed);
+    }
+
+    pub fn manual_fps(&self) -> u32 {
+        self.preferred_fps.load(Ordering::Relaxed)
+    }
+
+    pub fn requested_fps(&self, panel_hz: u32) -> u32 {
+        match self.manual_fps() {
+            0 => panel_hz.clamp(30, 144),
+            fps => fps.min(panel_hz.clamp(30, 144)),
         }
-        self.reconfigure_encoder.store(true, Ordering::Relaxed);
-        self.request_idr.store(true, Ordering::Relaxed);
+    }
+
+    pub fn stream_state(&self) -> StreamState {
+        let display = *self.display.lock().unwrap_or_else(|e| e.into_inner());
+        let (stream_width, stream_height) = display.stream_size();
+        StreamState {
+            stream_width,
+            stream_height,
+            refresh_hz: display.refresh_hz,
+            target_fps: self.target_fps.load(Ordering::Relaxed),
+            bitrate_kbps: self.target_bitrate_kbps.load(Ordering::Relaxed),
+            manual_bitrate_kbps: self.manual_bitrate_kbps.load(Ordering::Relaxed),
+            orientation: DisplayOrientation::from_dimensions(stream_width, stream_height),
+        }
     }
 
     /// Applies an explicit bitrate choice (dashboard or tablet settings).
@@ -271,6 +293,9 @@ impl HostShared {
     /// the monitor again by itself, while the cursor tracker and pen injector would keep the
     /// stale rect: the cursor then counts as off-screen and is never sent.
     pub fn refresh_display_geometry(&self) {
+        if crate::capture::virtual_display::display_changes_disabled() {
+            return;
+        }
         let Some(live) = crate::capture::find_virtual_display(std::time::Duration::ZERO) else {
             return;
         };
@@ -278,11 +303,12 @@ impl HostShared {
             return;
         }
         let mut d = self.display.lock().unwrap_or_else(|e| e.into_inner());
-        if (d.hmonitor, d.left, d.top, d.width, d.height) == (live.hmonitor, live.left, live.top, live.width, live.height) {
+        if (d.hmonitor, d.left, d.top, d.width, d.height, d.refresh_hz)
+            == (live.hmonitor, live.left, live.top, live.width, live.height, live.refresh_hz)
+        {
             return;
         }
-        // The stream rate is managed separately (tablet settings); keep it.
-        *d = ActiveDisplayInfo { refresh_hz: d.refresh_hz, ..live };
+        *d = live;
         self.injector
             .lock()
             .unwrap_or_else(|e| e.into_inner())

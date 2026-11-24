@@ -19,8 +19,8 @@ use tokio::sync::mpsc;
 use extscreen_common::discovery::{HostAnnouncement, DISCOVERY_PORT, PROBE};
 use extscreen_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
-    flags, msg_types, AuthMode, AuthPolicy, ClientHello, ControlMessage, PacketHeader,
-    StreamSettingsUpdate, VideoCodec, BITRATE_AUTO,
+    flags, msg_types, AuthMode, AuthPolicy, ClientHello, ControlMessage, DisplayOrientation, DisplayRequest,
+    PacketHeader, StreamSettingsUpdate, VideoCodec, BITRATE_AUTO,
 };
 use extscreen_common::{transcript, PakeClient, Role};
 
@@ -175,6 +175,7 @@ async fn main() -> Result<()> {
     let bad_idr = VideoPacket {
         data: Arc::new(vec![0, 0, 0, 1, 0x40, 0x01, 0xFE, 0xED]),
         pts_us: 1,
+        stream_size: (3200, 2136),
         is_keyframe: true,
         is_config: true,
         captured_at: Instant::now(),
@@ -228,6 +229,7 @@ async fn main() -> Result<()> {
         .send(VideoPacket {
             data: Arc::new(big_frame.clone()),
             pts_us: 55_000,
+            stream_size: (1800, 1200),
             is_keyframe: true,
             is_config: false,
             captured_at: Instant::now(),
@@ -295,6 +297,7 @@ async fn main() -> Result<()> {
         packet: VideoPacket {
             data: Arc::new(matching_idr.clone()),
             pts_us: 99_000,
+            stream_size: (1800, 1200),
             is_keyframe: true,
             is_config: true,
             captured_at: Instant::now(),
@@ -347,7 +350,7 @@ async fn main() -> Result<()> {
     check("matching cached H.264 IDR replayed immediately to Tablet Beta", beta_got_cached_idr && cfg_b.codec == VideoCodec::H264)?;
 
     // Scenario 6: Tablet Alpha resumes passwordlessly with its stored secret (replacing Beta)
-    let (client_a2, sec2, _) = connect_encrypted(
+    let (mut client_a2, sec2, _) = connect_encrypted(
         addr,
         hello([0xAA; 16], "Tablet Alpha", vec![VideoCodec::H264]),
         AuthMode::Resume,
@@ -355,6 +358,57 @@ async fn main() -> Result<()> {
     )
     .await?;
     check("Tablet Alpha resumed passwordlessly without PIN", sec2.is_none())?;
+
+    let orientation = bincode::serialize(&ControlMessage::SetDisplayOrientation(DisplayRequest {
+        orientation: DisplayOrientation::Portrait,
+        panel_width: 1200,
+        panel_height: 1800,
+        max_refresh_hz: 120,
+    }))?;
+    client_a2.writer.send(
+        PacketHeader::new(msg_types::CONTROL, flags::NONE, 0, 6, orientation.len() as u32, 0),
+        &orientation,
+    ).await?;
+    {
+        // Emulate the Windows mode switch. This suite intentionally does not change real displays.
+        let mut display = shared.display.lock().unwrap();
+        (display.width, display.height) = (1200, 1800);
+    }
+    let portrait_idr = vec![0, 0, 0, 1, 0x65, 0x44];
+    video_tx.send(VideoPacket {
+        data: Arc::new(portrait_idr.clone()),
+        pts_us: 101_000,
+        stream_size: (1200, 1800),
+        is_keyframe: true,
+        is_config: true,
+        captured_at: Instant::now(),
+    }).await?;
+
+    let mut confirmed_size = false;
+    let mut received_portrait = false;
+    let mut received_status = false;
+    while !received_portrait || !received_status {
+        let h = client_a2.reader.read(IO, 1024 * 1024).await?;
+        match h.msg_type {
+            msg_types::CONTROL => match bincode::deserialize(&client_a2.reader.payload)? {
+                ControlMessage::ServerConfig(cfg) => {
+                    confirmed_size = (cfg.stream_width, cfg.stream_height) == (1200, 1800);
+                }
+                ControlMessage::StreamState(state) => {
+                    received_status = state.orientation == DisplayOrientation::Portrait
+                        && state.stream_width == 1200 && state.stream_height == 1800
+                        && state.refresh_hz == 120 && state.target_fps == 90;
+                }
+                _ => {}
+            }
+            msg_types::VIDEO_RAW if client_a2.reader.payload == portrait_idr => {
+                check("Portrait decoder config was sent before the new IDR", confirmed_size)?;
+                received_portrait = true;
+            }
+            _ => {}
+        }
+    }
+    check("Same encrypted session receives portrait telemetry and retains the FPS cap", received_status)?;
     drop(client_a2);
     drop(client_b);
 

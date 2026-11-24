@@ -11,6 +11,9 @@ class _Host implements HostBridge {
   final calls = <(String, Object?)>[];
   int fps = 120;
   bool connected = true;
+  bool portrait = false;
+  bool? titleBarDark;
+  int rate = 29000;
   Map<String, dynamic>? driver;
 
   @override
@@ -20,7 +23,7 @@ class _Host implements HostBridge {
   void hideDashboard() {}
 
   @override
-  void setDashboardDark(bool dark) {}
+  void setDashboardDark(bool dark) => titleBarDark = dark;
 
   @override
   Future<Map<String, dynamic>> request(String command, [Object? value]) async {
@@ -37,11 +40,11 @@ class _Host implements HostBridge {
           'connected': connected,
           'device_name': 'Tablet',
           'link': 'usb',
-          'width': 3200,
-          'height': 2136,
-          'refresh_hz': 120,
+          'width': portrait ? 2136 : 3200,
+          'height': portrait ? 3200 : 2136,
+          'refresh_hz': portrait ? 60 : 120,
           'fps': fps,
-          'bitrate_kbps': 29000,
+          'bitrate_kbps': rate,
           'manual_bitrate_kbps': 0,
           'codec': 'HEVC',
           'pin': '123456',
@@ -55,6 +58,11 @@ class _Host implements HostBridge {
 
 Widget _app(AppearanceController appearance, _Host host) => p.PrismApp(
   theme: p.ThemeData(visualDensity: p.VisualDensity.compact),
+  darkTheme: p.ThemeData(
+    visualDensity: p.VisualDensity.compact,
+    brightness: Brightness.dark,
+  ),
+  themeMode: appearance.themeMode,
   locale: Locale(appearance.chinese ? 'zh' : 'en'),
   supportedLocales: const [Locale('en'), Locale('zh')],
   localizationsDelegates: const [
@@ -69,6 +77,71 @@ Widget _app(AppearanceController appearance, _Host host) => p.PrismApp(
 );
 
 void main() {
+  test('theme preferences default to system and keep legacy overrides', () {
+    expect(AppearanceController.themeModeFrom({}), p.ThemeMode.system);
+    expect(
+      AppearanceController.themeModeFrom({'dark': true}),
+      p.ThemeMode.dark,
+    );
+    expect(
+      AppearanceController.themeModeFrom({'dark': false}),
+      p.ThemeMode.light,
+    );
+    expect(
+      AppearanceController.themeModeFrom({'themeMode': 'system', 'dark': true}),
+      p.ThemeMode.system,
+    );
+  });
+
+  testWidgets('system theme updates title bar and explicit mode overrides it', (
+    tester,
+  ) async {
+    final appearance = AppearanceController.inMemory();
+    final host = _Host();
+    final dispatcher = tester.binding.platformDispatcher;
+    dispatcher.platformBrightnessTestValue = Brightness.light;
+    addTearDown(dispatcher.clearPlatformBrightnessTestValue);
+    await tester.pumpWidget(
+      ListenableBuilder(
+        listenable: appearance,
+        builder: (_, _) => _app(appearance, host),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(host.titleBarDark, isFalse);
+    dispatcher.platformBrightnessTestValue = Brightness.dark;
+    await tester.pumpAndSettle();
+    expect(host.titleBarDark, isTrue);
+
+    await appearance.setThemeMode(p.ThemeMode.light);
+    await tester.pumpAndSettle();
+    expect(host.titleBarDark, isFalse);
+  });
+
+  testWidgets('settings reports live host orientation and encoding changes', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1080, 720);
+    addTearDown(tester.view.reset);
+    final host = _Host();
+    await tester.pumpWidget(_app(AppearanceController.inMemory(), host));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('3200 × 2136 · 120 Hz'), findsOneWidget);
+    expect(find.text('Landscape'), findsOneWidget);
+
+    host.portrait = true;
+    host.fps = 60;
+    host.rate = 18000;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('2136 × 3200 · 60 Hz'), findsOneWidget);
+    expect(find.text('Portrait'), findsOneWidget);
+    expect(find.text('HEVC · 60 fps · 18.0 Mb/s'), findsOneWidget);
+  });
+
   testWidgets('Windows tracks window width with a dock and two sidebar modes', (
     tester,
   ) async {
@@ -198,7 +271,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Dark'));
     await tester.pumpAndSettle();
-    expect(appearance.dark, isTrue);
+    expect(appearance.themeMode, p.ThemeMode.dark);
     expect(tester.takeException(), isNull);
   });
 

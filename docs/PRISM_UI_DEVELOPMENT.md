@@ -7,7 +7,7 @@ ExtScreen 用 Flutter 和 Prism UI 构建 Windows 控制面板、Android 连接�
 | 项目 | ExtScreen 的基线 | 如何复用 |
 | --- | --- | --- |
 | Flutter / Dart | FVM 固定 Flutter 3.50.0，Dart 随 SDK 提供。应用声明 Dart `>=3.14.0 <4.0.0` | 同时提交 SDK 版本、依赖声明和锁文件。从 Flutter 应用目录执行 FVM 命令。 |
-| Prism UI | `prism_ui: 0.1.3`，从 pub.dev 解析，精确版本见锁文件 | 优先读安装版本的接口。官方仓库的 `main` 可能已经有同名控件的新参数。 |
+| Prism UI | [仓库内源码](../ui/vendor/prism_ui/EXTSCREEN_UPSTREAM.md)固定到 `8a4ca42d4205f01486da397cb7f89ba5a8071139`，上游元数据仍为 0.1.3 | 用相对路径解析，升级时先对照[上游差异][prism-compare]，再逐项复验本地补丁。 |
 | FlClash 参考 | commit `afe7136002271fd64f098b154e7fff40be721eb8`，其 `plugins/prism_ui` 子模块指向 `6c47901cc80b5325bdb9650579ca2e000a60b39e` | 把应用的布局、路由和交互组织当作参考。子模块提交与 pub 发布包分别核对。 |
 | Windows | Flutter x64 Runner、MSVC、Windows SDK、Rust 主机 | 在一个进程中可直接调用本地接口。跨进程时可以用有边界的 IPC，ExtScreen 使用本地命名管道。 |
 | Android | Gradle Wrapper、JDK 17、Android SDK 36、NDK。应用 `minSdk 26`、`targetSdk 34`、`compileSdk 36` | Flutter 可以是独立应用，也可以嵌入既有 Activity。ExtScreen 由既有 Gradle 工程打包。 |
@@ -15,6 +15,12 @@ ExtScreen 用 Flutter 和 Prism UI 构建 Windows 控制面板、Android 连接�
 仓库中的基线见 [ui/.fvmrc](../ui/.fvmrc)、[ui/pubspec.yaml](../ui/pubspec.yaml)、[ui/pubspec.lock](../ui/pubspec.lock) 和 [Android Gradle 配置](../client/app/build.gradle.kts)。FlClash 的依赖声明指定了本地子模块，发布工作流也使用 Flutter 3.50.0。[FlClash 依赖声明][fl-pub] · [FlClash 发布工作流][fl-build] · [Prism UI 0.1.3 发布包][prism-package]
 
 Prism UI 0.1.3 的包元数据将 Flutter 下限写为 3.47.0。ExtScreen 实际构建时，Flutter 3.47.6 的公共导出无法为该包提供它使用的 `ScrollCacheExtent`，应用代码静态检查可以通过，但 Flutter 测试编译会失败。使用 3.50.0 作为本项目的已验证基线。迁入另一项目时同样要做一次真实的 `flutter test` 或构建。[Flutter 3.50.0 viewport 导出][flutter-viewport] · [FlClash 工具链记录][fl-project]
+
+该提交比 0.1.3 标签多 28 个提交。采用了 Dock 宽度、紧凑列表测量和玻璃裁切改进。保留上游 LICENSE 与 NOTICE，不修改全局 Pub 缓存。日后同步上游，先比较下列本地修正，确认回归已由新代码覆盖方可移除。
+
+- `navigation_dock.dart` 保持已选项抬起和静止两层的图标及文字主色一致。玻璃亮度可单独变化，弹簧归位后换层时前景不跳色。
+- `popup.dart` 保留收回到锚点的运动，在最后 140 ms 渐隐回收盘的填充、玻璃和阴影。锚点快照保留到实际按钮接管，延迟提交的选项不会在回收中途移动锚点。
+- `app.dart` 用 `manageSystemUiOverlayStyle` 关闭 Android 嵌入壳中的 Prism 全局系统栏样式，避免和原生窗口重复写入。
 
 上游源码分两层。Prism UI 定义组件、颜色、图标绘制、尺寸、动画与着色器。FlClash 在这一层之上添加导航状态、自己的规则与代理界面。ExtScreen 直接依赖独立的 Prism UI 包，用自己的连接、配对和串流状态填充相同组件。[FlClash UI 分层][fl-architecture] · [Prism UI 公共导出][prism-barrel]
 
@@ -38,7 +44,7 @@ import 'package:prism_ui/prism_ui.dart' as prism;
 
 Widget toolApp({
   required Widget home,
-  required bool dark,
+  prism.ThemeMode themeMode = prism.ThemeMode.system,
   required Locale locale,
   required bool mobileGlass,
   required LocalizationsDelegate<prism.UiLocalizations> prismStrings,
@@ -53,7 +59,7 @@ Widget toolApp({
   return prism.PrismApp(
     theme: palette(Brightness.light),
     darkTheme: palette(Brightness.dark),
-    themeMode: dark ? prism.ThemeMode.dark : prism.ThemeMode.light,
+    themeMode: themeMode,
     locale: locale,
     supportedLocales: const [Locale('en'), Locale('zh')],
     localizationsDelegates: [prismStrings, GlobalWidgetsLocalizations.delegate],
@@ -100,7 +106,7 @@ Widget toolApp({
 
 | 层级 | 常见内容 | ExtScreen 用法 |
 | --- | --- | --- |
-| `page` | 页面主体、工作区、一般 Sheet 的底色 | 连接和设置正文，串流控制抽屉的底层 |
+| `page` | 页面主体、工作区、一般 Sheet 的底色 | 连接和设置正文，串流控制浮窗的底层 |
 | `card` | 分组列表、相对于页面抬高的内容块 | 连接方式、外观设置、配对与串流信息 |
 | `block` | 卡片内的选择器、局部容器 | 小型预览或需要与所属卡片分隔的控制 |
 | `inset` | 块内的图标托底、状态标记和轨道 | 辅助表达，不再叠第五层容器 |
@@ -210,44 +216,35 @@ Widget densityRow({
 
 ExtScreen 有连接页和一个透明的 `/stream` 路由。串流 Activity 使用独立 Flutter 壳提供控制，已有的 `SurfaceView` 与原生笔迹、光标层继续承担显示与高频输入。Prism 的玻璃能采样同一 Flutter 场景内的背景。原生 `SurfaceView` 的解码画面由系统另行合成，浮层可以呈现透光和玻璃边缘，着色器不会重折射这层解码画面。这样也省去了把视频逐帧读回 Flutter 的开销。
 
-打开控制面板使用 `showSheet`。手机采用可拖动的底部面板，宽屏采用侧边面板。使用 Prism 的路线、约束、遮罩和退场动画。普通的 `Navigator.push` 结果在路由弹出时返回，图层还可能在过渡中可见。需要阻隔底层输入到动画结束时，等待 `ModalRoute.completed`。
+### 右上角控制浮窗
 
-```dart
-import 'package:flutter/widgets.dart';
-import 'package:prism_ui/prism_ui.dart';
+浮窗停靠在安全区内的右上角，由可用宽高决定列数。窄屏单列，空间充足时把选项分成两列，尽量在一页容纳状态、设置和应用操作。字体放大、键盘或短窗使高度不足时，面板内部滚动。紧凑布局依靠简短标签、并排数值和恰当的分组，保留触控命中尺寸和图标的语义标签。
 
-Future<void> showToolControls(
-  BuildContext context, {
-  required ValueChanged<bool> setModalInput,
-  required WidgetBuilder controls,
-}) async {
-  ModalRoute<dynamic>? panelRoute;
-  setModalInput(true);
-  try {
-    await showSheet<void>(
-      context: context,
-      builder: (panelContext) {
-        panelRoute ??= ModalRoute.of(panelContext);
-        return controls(panelContext);
-      },
-    );
-    await panelRoute?.completed;
-  } finally {
-    setModalInput(false);
-  }
-}
-```
+半透明背景使用连续圆角和足够的底色不透明度，分别用明暗桌面检查标签对比。串流视频由系统合成，Flutter 不为了增强模糊逐帧回读视频。
 
-实际实现还防止重复打开，在等待异步结果后检查 `mounted`，原生返回键先关闭打开的控制面板。透明路由根只建立一层；Android 双返回退出串流经原生生命周期处理。选择菜单、外部点按或滑动关闭共用面板自身的关闭机制。[ExtScreen 串流 UI](../ui/lib/stream_overlay.dart) · [Prism Sheet 自适应路由][prism-sheet] · [Flutter TransitionRoute.completed][flutter-completed]
+1. `streamHitAreas` 上报布局后的逻辑像素矩形。Kotlin 用当前密度映射，命中控制入口、快捷键、缩放图或面板时才交给 Flutter。
+2. 主浮窗以局部命中区实现画面穿透，动画退场时保留还在显示的命中区。帧率、码率、触控模式、压力曲线、笔身按键和本地笔迹在各自的值按钮上使用 `PopupAnchor` 和 `PopupMenu`。以勾选状态标识当前值，主浮窗保持原位。帧率和码率的菜单只更新草稿，由「应用」提交；触控与笔选项收回后即时生效。
+3. 子菜单由 Prism 处理定位、液态玻璃、点击外部关闭和锚点快照。它可能超出主浮窗的矩形，所以 Android 只在子路由从展开到 `completed` 期间接管完整的轻触范围，避免点击菜单外侧误操作 Windows。系统返回键先关闭子菜单，收回完成后恢复主浮窗的局部命中区。
+4. 首指按下时确定整个手势的接收端，越过边缘不能换接收端。旋屏需结束旧坐标下的手势，并重新发布新视口的浮窗矩形。
 
-原生触控路由需要区分交互区而不是把整张透明 Flutter 视图当成一个按钮。
+[串流浮窗](../ui/lib/stream_overlay.dart) · [原生浮层宿主](../client/app/src/main/java/com/extscreen/StreamControlsView.kt)
 
-1. 平时 Dart 只上报控制入口、快捷键和缩放图这几块布局完成后的逻辑像素矩形。Kotlin 用当前密度转换事件坐标，命中其中才把这笔操作送进 Flutter。
-2. 面板打开时上报 `modal: true`，面板和遮罩承接触控。退场过渡结束后再恢复上报普通命中区。
-3. 手势归属在第一指按下时确定。拖动中途越过控制区域时仍走起始路径。跟随原生连接状态处理取消事件与修饰键抬起。
-4. 串流统计按需要送往界面。无变化的快照不触发 Flutter 重建。实测玻璃时同时看画面流畅度、笔迹响应，以及亮暗视频背景下文字能否读清。
+### Android 系统栏和 HyperOS
 
-集成代码见 [StreamControlsView.kt](../client/app/src/main/java/com/extscreen/StreamControlsView.kt)、[MainActivity.kt](../client/app/src/main/java/com/extscreen/MainActivity.kt) 和 [AndroidUiChannel.kt](../client/app/src/main/java/com/extscreen/AndroidUiChannel.kt)。Prism 玻璃的捕获、模糊回退与形状由包实现，正常 Flutter 测试的渲染后端和安卓真机可能不同。[Prism Liquid Glass 源码][prism-glass] · [FlClash 玻璃说明][fl-architecture]
+连接页使用 edge-to-edge，背景填到系统栏，交互元素仍避让安全区。实际浅色主题使用深色系统图标，实际深色主题使用浅色图标。串流页的系统栏采用 Android 沉浸和临时唤出策略。原生窗口负责透明度、图标对比和前后台恢复，Flutter 只在有效亮度变化时调用 `setEffectiveDark`。在原生拥有窗口时关闭 Prism 自动系统栏样式，避免在 HyperOS 上互相覆盖。测试手势导航、三键导航、状态栏唤出和两种主题。[Android edge-to-edge][android-edge] · [Android 沉浸模式][android-immersive] · [应用入口](../ui/lib/main.dart) · [原生系统栏](../client/app/src/main/java/com/extscreen/WindowChrome.kt)
+
+### 重力旋屏与实时串流参数
+
+串流 Activity 设置 `fullSensor`，仅此页面允许在系统全局方向锁定时随重力旋转。活动接收方向和窗口配置变化。用实际面板尺寸和刷新率能力向主机协商，避免用 Flutter 逻辑像素作为 Windows 分辨率。连接页维持系统方向设置。在平板分屏与系统桌面窗口中，平台可能决定活动的最终方向，以实际配置回调为准。[Android 大屏方向说明][android-orientation]
+
+- 客户端发出 `SetDisplayOrientation`，主机重新设置已启用的 MttVDD，再读取 Windows 实际显示模式。镜像时状态仍反映主屏实际方向和分辨率。
+- `ServerConfig` 负责解码器所需的分辨率、帧率与编解码器，`StreamState` 为两端界面提供主机权威状态。尺寸变化时先发新配置再发送新尺寸关键帧，丢弃旧尺寸队列，并更新光标和触控的坐标映射。
+- 区分实际显示刷新率、编码帧率、用户设定的帧率或码率上限和自适应编码目标。两端显示主机回报的结果，避免把本机面板参数或尚未应用的编辑值当成实际串流值。
+- 控制消息以追加方式保留已有握手与编号。两端同时更新才能完整验证旋屏和状态同步。用扩展模式做一次横向 → 纵向 → 横向，分别在 Windows 和 Android 更改限制，观察另一端状态刷新。补测镜像、断线、睡眠恢复及浮窗外手势。
+
+[Android 串流 Activity](../client/app/src/main/java/com/extscreen/MainActivity.kt) · [控制协议](../common/src/protocol.rs) · [主机传输](../host/src/transport/server.rs)
+
+DAWN 与小米 Pad 7 Ultra 的联调记录为 3200 × 2136 → 2136 × 3200 → 3200 × 2136，旋屏均为 120 Hz，扩展会话保持连接。Windows 将目标码率临时设为 35 Mb/s 时，安卓浮窗随即显示 35.0 Mb/s。从安卓选 90 FPS 后，Windows 读回 90 FPS 与 90 Hz。
 
 ## 7. Windows 窗口与每显示器 DPI
 
@@ -273,7 +270,7 @@ Future<void> showToolControls(
 
 ## 8. 语言和主题
 
-`AppearanceController` 管理语言与深浅色，由 `PrismApp` 读取，页面从同一偏好取得本地化文字。Android 通过小型通道把偏好写到原生首选项，两条 Flutter 启动路径分别载入。Windows 保存到用户本地应用数据目录。初次运行按系统默认值选取，之后以用户设置为准。主题切换保持当前目的地和原生连接。
+`AppearanceController` 管理语言与深浅色，由 `PrismApp` 读取，页面从同一偏好取得本地化文字。Android 通过小型通道把偏好写到原生首选项，两条 Flutter 启动路径分别载入。Windows 保存到用户本地应用数据目录。首次打开默认选中「跟随系统」，持续响应系统主题变化。已有 `dark: bool` 迁移为明确的深色或浅色，保留用户原选择；`themeMode` 中显式保存 `system`、`light` 或 `dark`。Windows 标题栏与 Android 系统栏使用实际亮度，避免把「跟随系统」当作某个固定颜色。主题切换保持当前目的地和原生连接。
 
 - 使用 `ExtScreenUiDelegate` 提供 Prism 内置提示，再由产品层实现标签、状态和错误提示。ExtScreen 当前语言为简体中文和英文，应用文字使用 `AppearanceController.text`。文字规模扩大时，可按 Flutter 的生成式本地化组织 ARB，保留自定义 `UiLocalizations` 委托。
 - 让失败码表达具体动作。配对过多失败、电脑拒绝、版本不同等原因要给相应的处理路径。主机名、地址和用户输入按原始值显示；应用生成的后备名称再按语言替换。
@@ -345,11 +342,11 @@ support/
 | --- | --- |
 | 手机和宽屏 | 运行 [Android widget 测试](../ui/test/android_screen_test.dart)，它覆盖 350×620 手机、1100×720 宽屏、配对、偏好和串流面板。按需补充真实手机、平板横竖屏、分屏和键盘弹起。 |
 | Windows 界面 | 运行 [Windows widget 测试](../ui/test/windows_screen_test.dart)，再检查窄窗与宽窗里的概览、配对和设置。用 125% 离屏像素用例检查组内接缝；实际用不同缩放的显示器来回拖动，检查逻辑尺寸与焦点。 |
-| 行与弹层 | 打开菜单再变更语言和主题，检查勾选值、弹层宽度、长文字和关闭后的焦点。核对滚动不把焦点藏在悬浮顶栏下。 |
+| 行与弹层 | 打开菜单再变更语言和主题，检查勾选值、弹层宽度、长文字和关闭后的焦点。核对滚动不把焦点藏在悬浮顶栏下。串流时打开靠近屏幕边缘的子菜单，验证外点关闭、返回顺序、选中后淡出、只提交编辑过的串流限制，以及收回后立刻恢复画面外部触控。 |
 | 串流 | 设备首次配对、同端重连、断线回到连接页。打开再关闭控制浮层后，验证画面、光标皮肤、触控和笔迹。检查从视频区域开始拖动跨过控制入口时的输入归属。 |
 | 性能与可读性 | 分别看实际手机和平板的 DPI、帧率和字重。浅色、深色，以及明暗远程桌面上都检查清晰度。遇到玻璃问题时用真实 Android 图形后端确认，而非只依据 widget 截图。 |
 
-回归排查从受影响的边界开始。DPI 只在跨屏出错时，检查 Runner 和物理像素转换。刷新率选择变化却没有视频变化时，比较 Dart 命令、Kotlin 生效值与主机状态。只有弹层覆盖时丢笔或鼠标输入时，检查 `streamHitAreas` 的矩形、模态标记和手势归属。依赖升级后从两端完整构建和渲染开始复验。
+回归排查从受影响的边界开始。DPI 只在跨屏出错时，检查 Runner 和物理像素转换。刷新率选择变化却没有视频变化时，比较 Dart 命令、Kotlin 生效值与主机状态。只有弹层覆盖时丢笔或鼠标输入时，检查 `streamHitAreas` 的矩形和首指手势归属。依赖升级后从两端完整构建和渲染开始复验。
 
 ## 10. 参考与许可
 
@@ -368,20 +365,25 @@ support/
 [fl-settings]: https://github.com/chen08209/FlClash/blob/afe7136002271fd64f098b154e7fff40be721eb8/lib/widgets/config_item.dart
 [fl-license]: https://github.com/chen08209/FlClash/blob/afe7136002271fd64f098b154e7fff40be721eb8/LICENSE
 [prism-package]: https://pub.dev/packages/prism_ui/versions/0.1.3
-[prism-barrel]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/prism_ui.dart
-[prism-app]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/app.dart
-[prism-dock]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/navigation_dock.dart
-[prism-scaffold]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/scaffold.dart
-[prism-surface]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/surface.dart
-[prism-popup]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/popup.dart
-[prism-sheet]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/sheet.dart
-[prism-glass]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/liquid_glass.dart
-[prism-license]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/LICENSE
-[prism-notice]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/NOTICE
-[prism-list-selected]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/list_selected.dart
-[prism-separator]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/list_row_separator.dart
-[prism-theme-data]: https://github.com/chen08209/prism_ui/blob/6c47901cc80b5325bdb9650579ca2e000a60b39e/lib/theme_data.dart
+[prism-barrel]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/prism_ui.dart
+[prism-app]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/app.dart
+[prism-dock]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/navigation_dock.dart
+[prism-scaffold]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/scaffold.dart
+[prism-surface]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/surface.dart
+[prism-popup]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/popup.dart
+[prism-sheet]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/sheet.dart
+[prism-glass]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/liquid_glass.dart
+[prism-license]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/LICENSE
+[prism-notice]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/NOTICE
+[prism-list-selected]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/list_selected.dart
+[prism-separator]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/list_row_separator.dart
+[prism-theme-data]: https://github.com/chen08209/prism_ui/blob/8a4ca42d4205f01486da397cb7f89ba5a8071139/lib/theme_data.dart
 [flutter-viewport]: https://github.com/flutter/flutter/blob/3.50.0/packages/flutter/lib/src/widgets/viewport.dart
 [flutter-completed]: https://api.flutter.dev/flutter/widgets/TransitionRoute/completed.html
 [flutter-l10n]: https://docs.flutter.dev/ui/internationalization
 [ms-dpi]: https://learn.microsoft.com/en-us/windows/win32/hidpi/wm-dpichanged
+
+[prism-compare]: https://github.com/chen08209/prism_ui/compare/v0.1.3...8a4ca42d4205f01486da397cb7f89ba5a8071139
+[android-edge]: https://developer.android.com/develop/ui/views/layout/edge-to-edge
+[android-immersive]: https://developer.android.com/develop/ui/views/layout/immersive
+[android-orientation]: https://developer.android.com/develop/adaptive-apps/guides/app-orientation-aspect-ratio-resizability

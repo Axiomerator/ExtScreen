@@ -24,7 +24,7 @@ Widget _app(AppearanceController prefs, Widget child) => ListenableBuilder(
         brightness: Brightness.dark,
       ),
     ),
-    themeMode: prefs.dark ? prism.ThemeMode.dark : prism.ThemeMode.light,
+    themeMode: prefs.themeMode,
     locale: Locale(prefs.chinese ? 'zh' : 'en'),
     supportedLocales: const [Locale('en'), Locale('zh')],
     localizationsDelegates: const [
@@ -117,7 +117,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('深色'));
       await tester.pumpAndSettle();
-      expect(prefs.chinese && prefs.dark, isTrue);
+      expect(prefs.chinese && prefs.themeMode == prism.ThemeMode.dark, isTrue);
       expect(
         prism.Theme.of(tester.element(find.text('外观'))).colorScheme.brightness,
         Brightness.dark,
@@ -149,7 +149,10 @@ void main() {
         }
         return null;
       });
-      final prefs = AppearanceController.inMemory(chinese: true, dark: true);
+      final prefs = AppearanceController.inMemory(
+        chinese: true,
+        themeMode: prism.ThemeMode.dark,
+      );
       await tester.pumpWidget(_app(prefs, AndroidScreen(appearance: prefs)));
       await tester.pumpAndSettle();
       expect(find.text('与 DAWN 配对'), findsOneWidget);
@@ -167,18 +170,32 @@ void main() {
     },
   );
 
-  testWidgets(
-    'stream menu preserves panel options and native pointer routing',
-    (tester) async {
-      tester.view.physicalSize = const Size(620, 350);
+  for (final size in [
+    const Size(350, 620),
+    const Size(620, 350),
+    const Size(850, 650),
+  ]) {
+    testWidgets('stream popup preserves native pointer routing at $size', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       final calls = <MethodCall>[];
       final state = <Object?, Object?>{
         'status': 2,
-        'fps': 120,
+        'fps': 60,
+        'targetFps': 120,
         'maxFps': 120,
         'bitrateKbps': -1,
+        'manualBitrateKbps': 0,
+        'streamWidth': 2560,
+        'streamHeight': 1440,
+        'refreshHz': 144,
+        'streamBitrateKbps': 20500,
+        'orientation': 'landscape',
+        'panelWidth': 3200,
+        'panelHeight': 2136,
         'peerName': 'DAWN',
         'shortcuts': false,
         'minimap': true,
@@ -190,19 +207,38 @@ void main() {
           'bottom': 0.5,
         },
       };
-      bindings.defaultBinaryMessenger.setMockMethodCallHandler(_channel, (
-        call,
-      ) async {
+      final messenger = bindings.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_channel, (call) async {
         calls.add(call);
         switch (call.method) {
           case 'getStreamState':
             return state;
           case 'setStreamOptions':
-            state.addAll(call.arguments as Map<Object?, Object?>);
+            final patch = call.arguments as Map<Object?, Object?>;
+            state.addAll(patch);
+            if (patch case {'fps': final fps}) state['targetFps'] = fps;
             return state;
         }
         return null;
       });
+      Map<Object?, Object?> hitAreas() =>
+          calls.lastWhere((call) => call.method == 'streamHitAreas').arguments
+              as Map<Object?, Object?>;
+      Future<void> nativeBack({bool settle = true}) async {
+        await messenger.handlePlatformMessage(
+          _channel.name,
+          _channel.codec.encodeMethodCall(
+            const MethodCall('dismissStreamMenu'),
+          ),
+          null,
+        );
+        if (settle) {
+          await tester.pumpAndSettle();
+        } else {
+          await tester.pump();
+        }
+      }
+
       final prefs = AppearanceController.inMemory();
       tester.platformDispatcher.defaultRouteNameTestValue = '/stream';
       addTearDown(tester.platformDispatcher.clearDefaultRouteNameTestValue);
@@ -211,41 +247,86 @@ void main() {
       final overlay = tester.element(find.byType(StreamOverlayScreen));
       expect(ModalRoute.of(overlay)?.opaque, isFalse);
       expect(Navigator.of(overlay).canPop(), isFalse);
-      expect(
-        calls.lastWhere((call) => call.method == 'streamHitAreas').arguments,
-        containsPair('modal', false),
-      );
+      expect(hitAreas(), containsPair('modal', false));
+      expect(hitAreas(), containsPair('popupOpen', false));
+
       await tester.tap(find.text('Controls'));
       await tester.pumpAndSettle();
       expect(find.text('Display controls'), findsOneWidget);
+      for (final label in ['2560 × 1440', '144 Hz', 'Landscape', '20.5 Mb/s']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('120 FPS'), findsOneWidget);
+      expect(find.text('3200 × 2136'), findsNothing);
+      expect(hitAreas(), containsPair('modal', false));
+      expect(hitAreas(), containsPair('popupOpen', true));
+      final hitRects = (hitAreas()['rects'] as List)
+          .cast<Map<Object?, Object?>>();
+      final panel = hitRects.last;
+      expect(panel['right'], closeTo(size.width - 12, 1));
+      expect(panel['left'], greaterThanOrEqualTo(12));
+      expect(panel['top'], lessThan(80));
+      expect(panel['bottom'], lessThanOrEqualTo(size.height - 12));
+      if (size.width >= 700) {
+        final limits = tester.getTopLeft(find.text('Stream limits'));
+        final tools = tester.getTopLeft(find.text('On-screen tools'));
+        expect(tools.dx, greaterThan(limits.dx + 150));
+        expect(tools.dy, closeTo(limits.dy, 1));
+      }
+
+      await tester.ensureVisible(find.text('Frame rate limit'));
+      await tester.tap(find.text('Frame rate limit'));
+      await tester.pumpAndSettle();
+      final menu = find.byType(prism.PopupMenu);
+      expect(menu, findsOneWidget);
+      expect(find.text('90 FPS'), findsOneWidget);
       expect(
-        calls.lastWhere((call) => call.method == 'streamHitAreas').arguments,
-        containsPair('modal', true),
+        tester
+            .widget<prism.PopupMenu>(menu)
+            .items
+            .singleWhere((item) => item.checked == true)
+            .label,
+        '120 FPS',
       );
-      await tester.tap(find.text('Refresh rate'));
+      expect(hitAreas(), containsPair('modal', true));
+      expect(find.text('Display controls'), findsOneWidget);
+      await nativeBack(settle: false);
+      expect(hitAreas(), containsPair('modal', true));
+      await nativeBack(settle: false);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('90 Hz'));
+      expect(menu, findsNothing);
+      expect(find.text('Display controls'), findsOneWidget);
+      expect(hitAreas(), containsPair('modal', false));
+      expect(hitAreas(), containsPair('popupOpen', true));
 
+      await tester.tap(find.text('Frame rate limit'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Apply stream settings'));
+      await tester.tapAt(const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(menu, findsNothing);
+      expect(hitAreas(), containsPair('modal', false));
 
+      await tester.ensureVisible(find.text('Frame rate limit'));
+      await tester.tap(find.text('Frame rate limit'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('90 FPS'));
+      await tester.pump();
+      expect(find.text('Apply stream settings'), findsNothing);
+      await tester.pumpAndSettle();
+      expect(hitAreas(), containsPair('modal', false));
+      expect(calls.where((call) => call.method == 'setStreamOptions'), isEmpty);
       await tester.tap(find.text('Apply stream settings'));
       await tester.pumpAndSettle();
       expect(
         calls.lastWhere((call) => call.method == 'setStreamOptions').arguments,
-        containsPair('fps', 90),
+        {'fps': 90},
       );
-      await tester.tap(
-        find.byWidgetPredicate(
-          (widget) => widget is prism.IconButton && widget.tooltip == 'Close',
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        calls.lastWhere((call) => call.method == 'streamHitAreas').arguments,
-        containsPair('modal', false),
-      );
+
+      await nativeBack();
+      expect(find.text('Display controls'), findsNothing);
+      expect(hitAreas(), containsPair('modal', false));
+      expect(hitAreas(), containsPair('popupOpen', false));
       expect(tester.takeException(), isNull);
-    },
-  );
+    });
+  }
 }

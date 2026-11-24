@@ -17,7 +17,8 @@ use extscreen_client_native::transport::{
 use extscreen_common::input::{actions, key_actions, tool_types, KeyEvent, PointerEvent};
 use extscreen_common::protocol::{
     flags, msg_types, AuthMode, AuthPolicy, AuthRejectReason, ControlMessage, CursorEvent,
-    PacketHeader, ServerConfig, VideoCodec, BITRATE_AUTO, HEADER_SIZE,
+    DisplayOrientation, DisplayRequest, PacketHeader, ServerConfig, StreamState, VideoCodec,
+    BITRATE_AUTO, HEADER_SIZE,
 };
 use extscreen_common::{hex, host_respond, transcript, DeviceSecret, HostId, Opener, Role, Sealer};
 
@@ -186,11 +187,13 @@ fn scenario_full_pairing_stream_input_and_passwordless_resume() {
     let received_pointers: Arc<Mutex<Vec<PointerEvent>>> = Arc::default();
     let received_keys: Arc<Mutex<Vec<KeyEvent>>> = Arc::default();
     let received_settings: SettingsLog = Arc::default();
+    let received_panels: Arc<Mutex<Vec<DisplayRequest>>> = Arc::default();
     let resumed_count = Arc::new(AtomicUsize::new(0));
 
     let rp = received_pointers.clone();
     let rk = received_keys.clone();
     let rs = received_settings.clone();
+    let panels = received_panels.clone();
     let rc = resumed_count.clone();
 
     let srv = thread::spawn(move || {
@@ -255,6 +258,24 @@ fn scenario_full_pairing_stream_input_and_passwordless_resume() {
                                             }
                                             ControlMessage::UpdateStreamSettings(u) => {
                                                 rs.lock().unwrap().push((u.target_fps, u.bitrate_kbps));
+                                            }
+                                            ControlMessage::SetDisplayOrientation(panel) => {
+                                                panels.lock().unwrap().push(panel);
+                                                if panel.orientation == DisplayOrientation::Portrait {
+                                                    let _ = send_ctrl(
+                                                        &mut stream,
+                                                        &ControlMessage::StreamState(StreamState {
+                                                            stream_width: 1100,
+                                                            stream_height: 1650,
+                                                            refresh_hz: 120,
+                                                            target_fps: 90,
+                                                            bitrate_kbps: 28_000,
+                                                            manual_bitrate_kbps: 0,
+                                                            orientation: DisplayOrientation::Portrait,
+                                                        }),
+                                                        Some(&mut sealer),
+                                                    );
+                                                }
                                             }
                                             _ => {}
                                         }
@@ -338,7 +359,7 @@ fn scenario_full_pairing_stream_input_and_passwordless_resume() {
     });
     client.queue_scroll_event_at(0.35, 0.72, -1.5);
     client.queue_key_event(KeyEvent::new(0x5A, key_actions::KEY_TAP, 1));
-    client.update_stream_settings(90, Some(BITRATE_AUTO));
+    client.update_stream_settings(Some(90), Some(BITRATE_AUTO));
 
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
@@ -359,7 +380,40 @@ fn scenario_full_pairing_stream_input_and_passwordless_resume() {
     assert_eq!(received_keys.lock().unwrap()[0].vk_code, 0x5A);
     assert_eq!(received_settings.lock().unwrap()[0], (Some(90), Some(BITRATE_AUTO)));
 
-    // 6. Disconnect and resume WITHOUT a PIN using the stored secret
+    // 6. Rotate within the authenticated session and consume the host's confirmed mode.
+    assert_eq!(
+        client.stream_snapshot(),
+        Some([1800, 1200, 0, 120, 35_000, -1, 1, 1]),
+        "a ServerConfig alone remains usable with an older host"
+    );
+    client.update_display(1200, 1800, 120);
+    let rotated = Some([1100, 1650, 120, 90, 28_000, 0, 2, 1]);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && client.stream_snapshot() != rotated {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(client.stream_snapshot(), rotated);
+    assert_eq!(client.get_status(), STATUS_CONNECTED);
+    assert_eq!(resumed_count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        *received_panels.lock().unwrap(),
+        [
+            DisplayRequest {
+                orientation: DisplayOrientation::Landscape,
+                panel_width: 1800,
+                panel_height: 1200,
+                max_refresh_hz: 120,
+            },
+            DisplayRequest {
+                orientation: DisplayOrientation::Portrait,
+                panel_width: 1200,
+                panel_height: 1800,
+                max_refresh_hz: 120,
+            },
+        ]
+    );
+
+    // 7. Disconnect and resume WITHOUT a PIN using the stored secret
     client.stop();
     thread::sleep(Duration::from_millis(80));
     client.start(base_config(port, None, vec![(TEST_HOST_ID, TEST_SECRET)]));

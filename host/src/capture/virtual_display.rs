@@ -11,12 +11,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use extscreen_common::protocol::DisplayOrientation;
 use tracing::{info, warn};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     ChangeDisplaySettingsExW, EnumDisplayDevicesW, EnumDisplaySettingsW, CDS_NORESET, CDS_UPDATEREGISTRY,
-    DEVMODEW, DISPLAY_DEVICEW, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
+    DEVMODEW, DISPLAY_DEVICEW, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DMDO_90, DMDO_DEFAULT,
     DM_POSITION, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE, ENUM_REGISTRY_SETTINGS,
 };
 
@@ -163,7 +164,7 @@ pub fn display_hz_for(panel_hz: u32) -> u32 {
 /// attaching failed.
 /// Test harnesses (`test_security_e2e`) set `EXTSCREEN_NO_DISPLAY_CHANGES=1` so driving the real
 /// transport server never attaches, re-modes or detaches the user's virtual monitor.
-fn display_changes_disabled() -> bool {
+pub(crate) fn display_changes_disabled() -> bool {
     std::env::var_os("EXTSCREEN_NO_DISPLAY_CHANGES").is_some_and(|v| v == "1")
 }
 
@@ -183,11 +184,20 @@ fn reload_driver_pipe() -> bool {
     pipe.write_all(&cmd).is_ok()
 }
 
-pub fn attach(panel_hz: u32, panel_w: u32, panel_h: u32) -> bool {
+pub fn attach(
+    panel_hz: u32,
+    panel_w: u32,
+    panel_h: u32,
+    orientation: DisplayOrientation,
+    still_wanted: impl FnOnce() -> bool,
+) -> bool {
     if display_changes_disabled() {
         return false;
     }
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !still_wanted() {
+        return false;
+    }
     let hz = display_hz_for(panel_hz);
     let Some((mut device, mut attached)) = find_device() else {
         return false;
@@ -218,7 +228,7 @@ pub fn attach(panel_hz: u32, panel_w: u32, panel_h: u32) -> bool {
             } else {
                 (current.x, current.y)
             };
-            let wanted = sized_for_panel(&device, Mode { x, y, hz, ..current }, panel_w, panel_h);
+            let wanted = sized_for_panel(&device, Mode { x, y, hz, ..current }, panel_w, panel_h, orientation);
             if wanted != current && apply_mode_any_rate(&device, wanted) {
                 info!(
                     "Tablet display switched from {}x{} @ {} Hz to {}x{} @ {} Hz at {},{}",
@@ -241,7 +251,7 @@ pub fn attach(panel_hz: u32, panel_w: u32, panel_h: u32) -> bool {
     } else {
         (base.x, base.y)
     };
-    let mode = sized_for_panel(&device, Mode { x, y, hz, ..base }, panel_w, panel_h);
+    let mode = sized_for_panel(&device, Mode { x, y, hz, ..base }, panel_w, panel_h, orientation);
 
     let mut applied = apply_mode_any_rate(&device, mode);
     if !applied && change_mtt_path(&device, true) {
@@ -490,6 +500,14 @@ fn apply_mode(device: &[u16], mode: Mode) -> bool {
     dm.dmPelsHeight = mode.height;
     dm.Anonymous1.Anonymous2.dmPosition.x = mode.x;
     dm.Anonymous1.Anonymous2.dmPosition.y = mode.y;
+    if mode.width > 0 && mode.height > 0 {
+        dm.dmFields |= DM_DISPLAYORIENTATION;
+        dm.Anonymous1.Anonymous2.dmDisplayOrientation = if mode.height > mode.width {
+            DMDO_90
+        } else {
+            DMDO_DEFAULT
+        };
+    }
     if mode.hz > 1 {
         dm.dmFields |= DM_DISPLAYFREQUENCY;
         dm.dmDisplayFrequency = mode.hz;
@@ -521,8 +539,9 @@ fn driver_sizes(device: &[u16]) -> Vec<(u32, u32)> {
     let mut sizes = Vec::new();
     for i in 0..1024 {
         let Some(m) = read_mode(device, ENUM_DISPLAY_SETTINGS_MODE(i)) else { break };
-        if !sizes.contains(&(m.width, m.height)) {
-            sizes.push((m.width, m.height));
+        let size = (m.width.max(m.height), m.width.min(m.height));
+        if !sizes.contains(&size) {
+            sizes.push(size);
         }
     }
     sizes
@@ -530,7 +549,7 @@ fn driver_sizes(device: &[u16]) -> Vec<(u32, u32)> {
 
 /// Picks the monitor size for a `panel_w`x`panel_h` tablet panel out of the driver's `sizes`.
 ///
-/// The client runs in landscape, so the panel is taken as landscape. Prefers the exact panel size
+/// Compares the panel and available modes in landscape coordinates. Prefers the exact panel size
 /// (1:1 pixels, nothing to scale); else the largest size of the same shape that still fits the
 /// panel; else the size whose shape is closest to the panel's (preferring sizes that fit), so a
 /// device the driver has no exact mode for is stretched as little as possible.
@@ -561,20 +580,26 @@ fn pick_panel_size(sizes: &[(u32, u32)], panel_w: u32, panel_h: u32) -> Option<(
 }
 
 /// `mode` resized to suit the tablet panel, keeping its position and refresh rate.
-fn sized_for_panel(device: &[u16], mode: Mode, panel_w: u32, panel_h: u32) -> Mode {
-    match pick_panel_size(&driver_sizes(device), panel_w, panel_h) {
-        Some((width, height)) => Mode { width, height, ..mode },
-        None => {
-            warn!("Virtual display driver offers no mode matching the {panel_w}x{panel_h} tablet panel; keeping {}x{}", mode.width, mode.height);
-            mode
-        }
-    }
+fn sized_for_panel(
+    device: &[u16],
+    mode: Mode,
+    panel_w: u32,
+    panel_h: u32,
+    orientation: DisplayOrientation,
+) -> Mode {
+    let (width, height) = pick_panel_size(&driver_sizes(device), panel_w, panel_h)
+        .unwrap_or_else(|| (mode.width.max(mode.height), mode.width.min(mode.height)));
+    let (width, height) = match orientation {
+        DisplayOrientation::Landscape => (width, height),
+        DisplayOrientation::Portrait => (height, width),
+    };
+    Mode { width, height, ..mode }
 }
 
 /// Modes below this are Windows' fallbacks (e.g. 800x600 after a mode-less attach), never a
 /// layout the user chose, so they are neither saved nor restored.
 fn is_plausible(m: &Mode) -> bool {
-    m.width >= 1024 && m.height >= 600
+    m.width.max(m.height) >= 1024 && m.width.min(m.height) >= 600
 }
 
 fn mode_path() -> Option<PathBuf> {

@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.net.wifi.WifiManager
@@ -24,6 +25,7 @@ class ConnectActivity : FlutterActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var ui: AndroidUiChannel? = null
     private var appearance: AppearanceChannel? = null
+    private val chrome by lazy { WindowChrome(window) }
     private var multicastLock: WifiManager.MulticastLock? = null
     private var lastIfaceSpec: String? = null
     private var usbReceiver: BroadcastReceiver? = null
@@ -71,7 +73,7 @@ class ConnectActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        appearance = AppearanceChannel(this, flutterEngine.dartExecutor.binaryMessenger)
+        appearance = AppearanceChannel(this, flutterEngine.dartExecutor.binaryMessenger, chrome::applyTheme)
         ui = AndroidUiChannel(flutterEngine.dartExecutor.binaryMessenger, ::state, ::handleCall)
     }
 
@@ -86,8 +88,20 @@ class ConnectActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         NativeEngine.initNativeLogging()
         super.onCreate(savedInstanceState)
+        chrome.setUp()
+        appearance?.syncSystemBars()
         handleIntent(intent)
         if (!suppressAutoConnect) checkAndLaunchAoa(intent)
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        appearance?.syncSystemBars()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        appearance?.syncSystemBars()
     }
 
     override fun onNewIntent(intent: Intent) {

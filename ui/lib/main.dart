@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
@@ -47,9 +48,8 @@ class ExtScreenApp extends StatelessWidget {
         title: 'ExtScreen',
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
-        themeMode: appearance.dark
-            ? prism.ThemeMode.dark
-            : prism.ThemeMode.light,
+        themeMode: appearance.themeMode,
+        manageSystemUiOverlayStyle: !Platform.isAndroid,
         liquidGlass: Platform.isAndroid
             ? prism.LiquidGlassQuality.standard
             : null,
@@ -64,7 +64,9 @@ class ExtScreenApp extends StatelessWidget {
           return prism.ViewScope(
             size: size,
             isMobile: size.width <= 600,
-            child: navigator!,
+            child: Platform.isAndroid
+                ? _AndroidSystemBars(child: navigator!)
+                : navigator!,
           );
         },
         home: stream ? null : child,
@@ -85,4 +87,29 @@ class ExtScreenApp extends StatelessWidget {
           : AndroidScreen(appearance: appearance),
     );
   }
+}
+
+class _AndroidSystemBars extends StatefulWidget {
+  const _AndroidSystemBars({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_AndroidSystemBars> createState() => _AndroidSystemBarsState();
+}
+
+class _AndroidSystemBarsState extends State<_AndroidSystemBars> {
+  Brightness? _applied;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final brightness = prism.Theme.brightnessOf(context);
+    if (_applied == brightness) return;
+    _applied = brightness;
+    unawaited(AppearanceController.applyAndroidSystemBars(brightness));
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

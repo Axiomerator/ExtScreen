@@ -10,13 +10,20 @@ class StreamOverlayScreen extends StatefulWidget {
   State<StreamOverlayScreen> createState() => _StreamOverlayScreenState();
 }
 
-class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
+class _StreamOverlayScreenState extends State<StreamOverlayScreen>
+    with SingleTickerProviderStateMixin {
+  static const _popupDuration = Duration(milliseconds: 180);
+
+  final _popupKey = GlobalKey();
+  late final _popupAnimation = AnimationController(
+    vsync: this,
+    duration: _popupDuration,
+  )..addStatusListener(_popupStatusChanged);
+
   final _menuArea = GlobalKey();
   final _shortcutsArea = GlobalKey();
   final _minimapArea = GlobalKey();
   final _latched = <int>{};
-  final _sheetState = ValueNotifier<_State>(const {});
-  NavigatorState? _sheetNavigator;
   late final StreamSubscription<dynamic> _subscription;
   _State _state = {};
   bool _menu = false;
@@ -24,12 +31,15 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
   bool _backHint = false;
   bool _interactionError = false;
   Timer? _hintTimer;
+  ModalRoute<dynamic>? _choiceRoute;
   bool? _lastModal;
+  bool? _lastPopupOpen;
   List<Rect> _lastRects = const [];
 
   String text(String en, String zh) => widget.appearance.text(en, zh);
   int get _status => _state['status'] as int? ?? 1;
   bool get _connected => _status == 2;
+  bool get _popupVisible => _menu || !_popupAnimation.isDismissed;
   String get _peer {
     final name = _state['peerName'] as String? ?? 'ExtScreen';
     return _state['directUsb'] == true &&
@@ -69,7 +79,6 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
 
   void _receive(_State state) {
     if (!mounted) return;
-    _sheetState.value = state;
     setState(() {
       _state = state;
       _shortcuts = state['shortcuts'] == true;
@@ -85,7 +94,12 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
     if (!mounted) return null;
     switch (call.method) {
       case 'dismissStreamMenu':
-        await _sheetNavigator?.maybePop();
+        final choice = _choiceRoute;
+        if (choice != null) {
+          if (choice.isCurrent) choice.navigator?.pop();
+        } else if (_menu) {
+          _setPopup(false);
+        }
       case 'backHint':
         _hintTimer?.cancel();
         setState(() => _backHint = true);
@@ -101,7 +115,7 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
     _hintTimer?.cancel();
     unawaited(_subscription.cancel());
     _android.setMethodCallHandler(null);
-    _sheetState.dispose();
+    _popupAnimation.dispose();
     super.dispose();
   }
 
@@ -118,35 +132,20 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
     }
   }
 
-  Future<void> _showControls() async {
-    if (_menu) return;
-    setState(() => _menu = true);
-    _publishHitAreas(const [], true);
-    ModalRoute<dynamic>? sheetRoute;
-    try {
-      await showSheet<void>(
-        context: context,
-        builder: (context) {
-          sheetRoute ??= ModalRoute.of(context);
-          _sheetNavigator = Navigator.of(context);
-          return ValueListenableBuilder<_State>(
-            valueListenable: _sheetState,
-            builder: (context, state, _) => _StreamOptions(
-              appearance: widget.appearance,
-              state: state,
-              onOptions: _setOptions,
-              onClose: () => Navigator.of(context).pop(),
-              onResetZoom: () => unawaited(_call('resetZoom')),
-              onClearInk: () => unawaited(_call('clearInk')),
-              onDisconnect: () => unawaited(_call('disconnect')),
-            ),
-          );
-        },
-      );
-      await sheetRoute?.completed;
-    } finally {
-      _sheetNavigator = null;
-      if (mounted) setState(() => _menu = false);
+  void _popupStatusChanged(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && mounted && !_menu) {
+      setState(() {});
+    }
+  }
+
+  void _setPopup(bool open) {
+    if (open == _menu) return;
+    _popupAnimation.duration = context.motionDuration(_popupDuration);
+    setState(() => _menu = open);
+    if (open) {
+      _popupAnimation.forward();
+    } else {
+      _popupAnimation.reverse();
     }
   }
 
@@ -164,7 +163,6 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
 
   void _setOptions(_State patch) {
     final next = {..._state, ...patch};
-    _sheetState.value = next;
     setState(() {
       _state = next;
       _shortcuts = next['shortcuts'] == true;
@@ -172,18 +170,37 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
     unawaited(_call('setStreamOptions', patch));
   }
 
-  void _publishHitAreas(List<Rect> rectangles, bool modal) {
+  void _watchChoiceRoute(ModalRoute<dynamic> route) {
+    if (identical(_choiceRoute, route)) return;
+    _choiceRoute = route;
+    _scheduleMeasure();
+    unawaited(
+      route.completed.then((_) {
+        if (!mounted || !identical(_choiceRoute, route)) return;
+        _choiceRoute = null;
+        _measureHitAreas();
+      }),
+    );
+  }
+
+  void _publishHitAreas(List<Rect> rectangles, bool popupOpen) {
+    // Prism owns menu taps and its tap-away barrier through the return morph.
+    // The parent control panel otherwise only owns its measured hit areas.
+    final modal = _choiceRoute != null;
     if (_lastModal == modal &&
+        _lastPopupOpen == popupOpen &&
         _lastRects.length == rectangles.length &&
         Iterable<int>.generate(rectangles.length)
             .every((i) => _lastRects[i] == rectangles[i])) {
       return;
     }
     _lastModal = modal;
+    _lastPopupOpen = popupOpen;
     _lastRects = rectangles;
     unawaited(
       _call('streamHitAreas', {
         'modal': modal,
+        'popupOpen': popupOpen,
         'rects': [
           for (final rect in rectangles)
             {
@@ -199,22 +216,64 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
 
   void _measureHitAreas() {
     if (!mounted) return;
-    if (_menu) {
-      _publishHitAreas(const [], true);
-      return;
-    }
     final bounds = <Rect>[];
-    for (final key in [_menuArea, _shortcutsArea, _minimapArea]) {
+    for (final key in [_menuArea, _shortcutsArea, _minimapArea, _popupKey]) {
       final box = key.currentContext?.findRenderObject();
-      if (box is RenderBox && box.hasSize)
+      if (box is RenderBox && box.hasSize && !box.size.isEmpty) {
         bounds.add(box.localToGlobal(Offset.zero) & box.size);
+      }
     }
-    _publishHitAreas(bounds, false);
+    _publishHitAreas(bounds, _popupVisible);
   }
+
+  Widget _popup() {
+    return Positioned.fill(
+      top: 56,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final maxWidth = constraints.maxWidth >= 700 ? 572.0 : 380.0;
+          final width = constraints.maxWidth.clamp(0.0, maxWidth).toDouble();
+          return Align(
+            alignment: Alignment.topRight,
+            child: SizedBox(
+              width: width,
+              child: ExcludeFocus(
+                excluding: !_menu,
+                child: IgnorePointer(
+                  ignoring: !_menu,
+                  child: FadeTransition(
+                    opacity: _popupAnimation,
+                    child: _ChromeGlass(
+                      popup: true,
+                      child: _StreamOptions(
+                        key: _popupKey,
+                        appearance: widget.appearance,
+                        state: _state,
+                        onOptions: _setOptions,
+                        onClose: () => _setPopup(false),
+                        onResetZoom: () => unawaited(_call('resetZoom')),
+                        onClearInk: () => unawaited(_call('clearInk')),
+                        onDisconnect: () => unawaited(_call('disconnect')),
+                        onLayout: _scheduleMeasure,
+                        onChoiceRoute: _watchChoiceRoute,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _scheduleMeasure() =>
+      WidgetsBinding.instance.addPostFrameCallback((_) => _measureHitAreas());
 
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _measureHitAreas());
+    _scheduleMeasure();
     final viewport = _state['viewport'] as _State?;
     final scale = (viewport?['scale'] as num?)?.toDouble() ?? 1;
     return Stack(
@@ -257,12 +316,15 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
                 child: _ChromeGlass(
                   key: _menuArea,
                   pill: true,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48),
-                    child: TextButton.icon(
-                      onPressed: () => unawaited(_showControls()),
-                      icon: const GlyphIcon(_settingsGlyph, size: 18),
-                      label: Text(text('Controls', '控制')),
+                  child: Semantics(
+                    expanded: _menu,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: TextButton.icon(
+                        onPressed: () => _setPopup(!_menu),
+                        icon: const GlyphIcon(_settingsGlyph, size: 18),
+                        label: Text(text('Controls', '控制')),
+                      ),
                     ),
                   ),
                 ),
@@ -304,6 +366,7 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
                   bottom: 0,
                   child: _minimap(viewport, scale),
                 ),
+              if (_popupVisible) _popup(),
               if (_backHint || _interactionError)
                 Align(
                   alignment: Alignment.bottomCenter,
@@ -431,9 +494,6 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
   }
 
   Widget _diagnostics() {
-    final width = _state['estimatedWidth'] ?? '–';
-    final height = _state['estimatedHeight'] ?? '–';
-    final fps = _state['fps'] ?? '–';
     final rttUs = _state['rttUs'] as num? ?? 0;
     final rtt = rttUs > 0 ? '${(rttUs / 1000).toStringAsFixed(1)} ms' : '–';
     final packets = _state['packetsSent'] ?? 0;
@@ -454,9 +514,10 @@ class _StreamOverlayScreenState extends State<StreamOverlayScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             spacing: 4,
             children: [
-              Text(
-                '$width × $height · $fps Hz',
-                style: AppTextStyle.footnote.of(context, emphasized: true),
+              _StreamMetrics(
+                state: _state,
+                appearance: widget.appearance,
+                compact: true,
               ),
               Text(
                 text(
@@ -522,9 +583,15 @@ class _ViewportPainter extends CustomPainter {
 }
 
 class _ChromeGlass extends StatelessWidget {
-  const _ChromeGlass({super.key, this.pill = false, required this.child});
+  const _ChromeGlass({
+    super.key,
+    this.pill = false,
+    this.popup = false,
+    required this.child,
+  });
 
   final bool pill;
+  final bool popup;
   final Widget child;
 
   @override
@@ -532,11 +599,14 @@ class _ChromeGlass extends StatelessWidget {
     final colors = context.colorScheme;
     final useGlass = LiquidGlassScope.of(context);
     final radius = pill ? AppRadius.full : AppRadius.xl;
+    final fill = popup
+        ? SurfaceLevel.floatingOf(colors).colorOf(colors)
+        : colors.surface;
     final shape = pill ? AppShape.full : AppShape.xl;
     // SurfaceView is a compositor layer outside Flutter. The soft backing
     // maintains readable controls over any source frame without copying video.
     return Surface(
-      color: colors.surface.withValues(alpha: useGlass ? .86 : 1),
+      color: fill.withValues(alpha: useGlass ? (popup ? .78 : .86) : 1),
       shape: shape,
       elevation: 3,
       clipBehavior: Clip.antiAlias,
@@ -544,6 +614,8 @@ class _ChromeGlass extends StatelessWidget {
           ? LiquidGlass(
               style: pill
                   ? LiquidGlassStyle.pill(colors)
+                  : popup
+                  ? LiquidGlassStyle.menu(colors)
                   : LiquidGlassStyle.regular(colors),
               borderRadius: radius,
               child: child,
@@ -553,8 +625,110 @@ class _ChromeGlass extends StatelessWidget {
   }
 }
 
+class _StreamMetrics extends StatelessWidget {
+  const _StreamMetrics({
+    required this.state,
+    required this.appearance,
+    this.compact = false,
+  });
+
+  final _State state;
+  final AppearanceController appearance;
+  final bool compact;
+
+  String text(String en, String zh) => appearance.text(en, zh);
+
+  String _frequency(String key) {
+    final value = state[key];
+    if (value is! num || value <= 0) return '—';
+    final label = value % 1 == 0
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
+    return '$label Hz';
+  }
+
+  String _resolution(String width, String height) {
+    final w = state[width];
+    final h = state[height];
+    return w is int && h is int && w > 0 && h > 0 ? '$w × $h' : '—';
+  }
+
+  String _bitrate() {
+    final value = state['streamBitrateKbps'];
+    return value is num && value > 0
+        ? '${(value / 1000).toStringAsFixed(1)} Mb/s'
+        : '—';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final resolution = _resolution('streamWidth', 'streamHeight');
+    final refresh = _frequency('refreshHz');
+    final bitrate = _bitrate();
+    final orientation = switch (state['orientation']) {
+      'portrait' => text('Portrait', '竖屏'),
+      'landscape' => text('Landscape', '横屏'),
+      _ => '—',
+    };
+    final style = AppTextStyle.footnote.of(context);
+    if (compact) {
+      final panel = _resolution('panelWidth', 'panelHeight');
+      final panelHz = _frequency('panelRefreshHz');
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 4,
+        children: [
+          Text('$resolution · $refresh · $bitrate', style: style),
+          if (panel != '—' || panelHz != '—')
+            Text(
+              text('Device panel $panel · $panelHz', '本机面板 $panel · $panelHz'),
+              style: style,
+            ),
+        ],
+      );
+    }
+    return Wrap(
+      spacing: 16,
+      runSpacing: 8,
+      children: [
+        for (final (label, value) in [
+          (text('Resolution', '分辨率'), resolution),
+          (text('Display refresh', '实际刷新率'), refresh),
+          (text('Orientation', '方向'), orientation),
+          (text('Stream bitrate', '实际码率'), bitrate),
+        ])
+          Semantics(
+            label: '$label $value',
+            excludeSemantics: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 2,
+              children: [
+                Text(
+                  label,
+                  style: style.copyWith(
+                    color: context.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: AppTextStyle.subheadline.of(context, emphasized: true),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+enum _StreamField { fps, bitrate, touch, pressure, barrel, ink }
+
 class _StreamOptions extends StatefulWidget {
   const _StreamOptions({
+    super.key,
     required this.appearance,
     required this.state,
     required this.onOptions,
@@ -562,6 +736,8 @@ class _StreamOptions extends StatefulWidget {
     required this.onResetZoom,
     required this.onClearInk,
     required this.onDisconnect,
+    required this.onLayout,
+    required this.onChoiceRoute,
   });
 
   final AppearanceController appearance;
@@ -571,159 +747,336 @@ class _StreamOptions extends StatefulWidget {
   final VoidCallback onResetZoom;
   final VoidCallback onClearInk;
   final VoidCallback onDisconnect;
+  final VoidCallback onLayout;
+  final ValueChanged<ModalRoute<dynamic>> onChoiceRoute;
 
   @override
   State<_StreamOptions> createState() => _StreamOptionsState();
 }
 
+typedef _ChoiceData = ({
+  String title,
+  List<(Object, String)> options,
+  Object value,
+  ValueChanged<Object> select,
+});
+
 class _StreamOptionsState extends State<_StreamOptions> {
+  static const _touchHeight = 48.0;
+  static const _padding = EdgeInsets.symmetric(horizontal: 12);
+
   int? _fps;
   int? _bitrate;
 
   String text(String en, String zh) => widget.appearance.text(en, zh);
 
+  int get _currentFps =>
+      widget.state['targetFps'] as int? ?? widget.state['fps'] as int? ?? 60;
+
+  int get _currentBitrate => switch (widget.state['manualBitrateKbps']) {
+    0 => -1,
+    final int kbps => kbps,
+    _ => widget.state['bitrateKbps'] as int? ?? -1,
+  };
+
+  bool get _hasChanges =>
+      (_fps != null && _fps != _currentFps) ||
+      (_bitrate != null && _bitrate != _currentBitrate);
+
+  String _fpsLabel(int fps) => fps == 0 ? text('Auto', '自动') : '$fps FPS';
+
+  String _rateLabel(int kbps) => kbps < 0
+      ? text('Auto', '自动')
+      : '${(kbps / 1000).toStringAsFixed(kbps % 1000 == 0 ? 0 : 1)} Mb/s';
+
+  _ChoiceData _setting(
+    String title,
+    String key,
+    List<(String, String)> options,
+  ) => (
+    title: title,
+    options: options,
+    value: widget.state[key] as String? ?? options.first.$1,
+    select: (value) => widget.onOptions({key: value}),
+  );
+
+  _ChoiceData _data(_StreamField field) {
+    return switch (field) {
+      _StreamField.fps => (
+        title: text('Frame rate limit', '帧率上限'),
+        options: [
+          for (final value
+              in ({60, 90, 120, _currentFps}
+                  .where(
+                    (fps) =>
+                        fps == _currentFps ||
+                        fps <= (widget.state['maxFps'] as int? ?? 120),
+                  )
+                  .toList()
+                ..sort()))
+            (value, _fpsLabel(value)),
+        ],
+        value: _fps ?? _currentFps,
+        select: (value) => setState(() => _fps = value as int),
+      ),
+      _StreamField.bitrate => (
+        title: text('Bitrate limit', '码率上限'),
+        options: [
+          for (final value in ({
+            -1,
+            15000,
+            25000,
+            35000,
+            50000,
+            _currentBitrate,
+          }.toList()..sort()))
+            (value, _rateLabel(value)),
+        ],
+        value: _bitrate ?? _currentBitrate,
+        select: (value) => setState(() => _bitrate = value as int),
+      ),
+      _StreamField.touch => _setting(text('Touch mode', '触控模式'), 'touchMode', [
+        ('ALL_TOUCH', text('All touch', '全部触控')),
+        ('PEN_ONLY', text('Pen only', '仅用笔')),
+        ('TWO_FINGER_SCROLL', text('Two-finger scroll', '双指滚动')),
+      ]),
+      _StreamField.pressure => _setting(
+        text('Pressure curve', '压力曲线'),
+        'pressureCurve',
+        [
+          ('LINEAR', text('Linear', '线性')),
+          ('SOFT', text('Soft', '柔和')),
+          ('FIRM', text('Firm', '偏硬')),
+          ('HARD', text('Hard', '硬')),
+        ],
+      ),
+      _StreamField.barrel => _setting(
+        text('Pen button', '笔身按键'),
+        'barrelMapping',
+        [
+          ('RIGHT_CLICK', text('Right-click', '右键')),
+          ('ERASER', text('Eraser', '橡皮擦')),
+        ],
+      ),
+      _StreamField.ink => _setting(text('Local ink', '本地笔迹'), 'inkMode', [
+        ('FADE', text('Fade', '渐隐')),
+        ('OFF', text('Off', '关闭')),
+        ('PERSIST', text('Keep', '保留')),
+      ]),
+    };
+  }
+
+  Widget _row(String title, {Widget? trailing, VoidCallback? onPressed}) =>
+      DecorationListItem(
+        minHeight: _touchHeight,
+        contentPadding: _padding,
+        title: Text(title),
+        trailing: trailing,
+        onPressed: onPressed,
+      );
+
   Widget _switch(String label, String key, {bool fallback = false}) {
     final value = widget.state[key] as bool? ?? fallback;
     void update(bool enabled) => widget.onOptions({key: enabled});
-    return DecorationListItem(
-      title: Text(label),
+    return _row(
+      label,
       onPressed: () => update(!value),
       trailing: Switch(value: value, onChanged: update, semanticLabel: label),
     );
   }
 
-  Widget _setting(String title, String key, List<(String, String)> choices) =>
-      _OptionsRow(
+  Widget _selectField(_StreamField field) {
+    final choice = _data(field);
+    final index = choice.options.indexWhere(
+      (entry) => entry.$1 == choice.value,
+    );
+    final value = choice.options[index < 0 ? 0 : index].$2;
+    PopupOpen? open;
+    return _row(
+      choice.title,
+      onPressed: () => open?.call(),
+      trailing: PopupAnchor(
+        targetBuilder: (show) {
+          open = show;
+          return TextButton(
+            onPressed: show,
+            style: ButtonStyle.from(
+              foregroundColor: context.colorScheme.onSurfaceVariant,
+              textStyle: context.listTitleStyle,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              spacing: 4,
+              children: [
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 108),
+                    child: PopupValueText(
+                      value,
+                      alignment: AlignmentDirectional.centerEnd,
+                    ),
+                  ),
+                ),
+                const GlyphIcon(Glyphs.picker, size: 16),
+              ],
+            ),
+          );
+        },
+        popupBuilder: (context) {
+          widget.onChoiceRoute(ModalRoute.of(context)!);
+          return PopupMenu(
+            items: [
+              for (final (id, label) in choice.options)
+                PopupMenuItem(
+                  label: label,
+                  checked: id == choice.value,
+                  onPressed: () {
+                    if (mounted) choice.select(id);
+                  },
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _group(String title, List<Widget> children) => Column(
+    children: [
+      ListHeader(
         title: title,
-        options: choices,
-        value: widget.state[key] as String? ?? choices.first.$1,
-        onChanged: (value) => widget.onOptions({key: value}),
-      );
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+      ),
+      generateGroup(children),
+    ],
+  );
+
+  Widget _settings(BuildContext context) {
+    final output = _group(text('Stream limits', '串流限制'), [
+      _selectField(_StreamField.fps),
+      _selectField(_StreamField.bitrate),
+    ]);
+    final input = _group(text('Touch & pen', '触控与笔'), [
+      _selectField(_StreamField.touch),
+      _selectField(_StreamField.pressure),
+      _selectField(_StreamField.barrel),
+      _selectField(_StreamField.ink),
+      if (widget.state['inkMode'] == 'PERSIST')
+        _row(text('Clear local ink', '清除本地笔迹'), onPressed: widget.onClearInk),
+    ]);
+    final tools = _group(text('On-screen tools', '屏幕工具'), [
+      _switch(text('Pinch to zoom', '双指缩放'), 'pinchZoom', fallback: true),
+      _switch(text('Zoom map', '缩放导航图'), 'minimap', fallback: true),
+      _switch(text('Drawing shortcuts', '绘图快捷键'), 'shortcuts'),
+      _switch(text('Diagnostics', '诊断信息'), 'diagnostics'),
+      _row(text('Reset zoom', '重置缩放'), onPressed: widget.onResetZoom),
+    ]);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 492) {
+          return Column(spacing: 10, children: [output, input, tools]);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 10,
+          children: [
+            Expanded(child: Column(spacing: 10, children: [output, input])),
+            Expanded(child: tools),
+          ],
+        );
+      },
+    );
+  }
+
+  void _apply() {
+    widget.onOptions({
+      if (_fps case final fps? when fps != _currentFps) 'fps': fps,
+      if (_bitrate case final bitrate? when bitrate != _currentBitrate)
+        'bitrateKbps': bitrate,
+    });
+    setState(() {
+      _fps = null;
+      _bitrate = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final currentFps = widget.state['fps'] as int? ?? 60;
-    final currentRate = widget.state['bitrateKbps'] as int? ?? -1;
-    final maxFps = widget.state['maxFps'] as int? ?? 120;
-    final rates = {
-      60,
-      90,
-      120,
-      currentFps,
-    }.where((rate) => rate <= maxFps).toList()..sort();
-    final modified =
-        (_fps != null && _fps != currentFps) ||
-        (_bitrate != null && _bitrate != currentRate);
-    return _PrismPage(
-      title: text('Display controls', '副屏控制'),
-      compact: context.isInCompactSheet,
-      leading: _BarButton(
-        label: text('Close', '关闭'),
-        glyph: Glyphs.close,
-        onPressed: widget.onClose,
-      ),
-      body: _PageScroll(
+    widget.onLayout();
+    return SurfaceScope(
+      level: SurfaceLevel.floatingOf(context.colorScheme),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          generateSection(
-            title: text('Stream', '串流'),
-            items: [
-              _OptionsRow<int>(
-                title: text('Refresh rate', '刷新率'),
-                options: [for (final rate in rates) (rate, '$rate Hz')],
-                value: _fps ?? currentFps,
-                onChanged: (value) => setState(() => _fps = value),
-              ),
-              _OptionsRow<int>(
-                title: text('Bitrate', '码率'),
-                options: [
-                  (-1, text('Auto', '自动')),
-                  for (final rate in [15, 25, 35, 50])
-                    (rate * 1000, '$rate Mbps'),
-                ],
-                value: _bitrate ?? currentRate,
-                onChanged: (value) => setState(() => _bitrate = value),
-              ),
-            ],
-          ),
-          if (modified)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Align(
-                alignment: AlignmentDirectional.centerEnd,
-                child: TonalButton(
-                  label: text('Apply stream settings', '应用串流设置'),
-                  onPressed: () {
-                    widget.onOptions({
-                      'fps': _fps ?? currentFps,
-                      'bitrateKbps': _bitrate ?? currentRate,
-                    });
-                    setState(() {
-                      _fps = null;
-                      _bitrate = null;
-                    });
-                  },
-                ),
-              ),
-            ),
-          generateSection(
-            title: text('Touch & pen', '触控与笔'),
-            items: [
-              _setting(text('Touch mode', '触控模式'), 'touchMode', [
-                ('ALL_TOUCH', text('All touch', '全部触控')),
-                ('PEN_ONLY', text('Pen only', '仅用笔')),
-                ('TWO_FINGER_SCROLL', text('Two-finger scroll', '双指滚动')),
-              ]),
-              _setting(text('Pressure curve', '压力曲线'), 'pressureCurve', [
-                ('LINEAR', text('Linear', '线性')),
-                ('SOFT', text('Soft', '柔和')),
-                ('FIRM', text('Firm', '偏硬')),
-                ('HARD', text('Hard', '硬')),
-              ]),
-              _setting(text('Pen button', '笔身按键'), 'barrelMapping', [
-                ('RIGHT_CLICK', text('Right-click', '右键')),
-                ('ERASER', text('Eraser', '橡皮擦')),
-              ]),
-              _setting(text('Local ink', '本地笔迹'), 'inkMode', [
-                ('FADE', text('Fade', '渐隐')),
-                ('OFF', text('Off', '关闭')),
-                ('PERSIST', text('Keep', '保留')),
-              ]),
-              if (widget.state['inkMode'] == 'PERSIST')
-                _ActionRow(
-                  title: text('Clear local ink', '清除本地笔迹'),
-                  onPressed: widget.onClearInk,
-                ),
-              _switch(
-                text('Pinch to zoom', '双指缩放'),
-                'pinchZoom',
-                fallback: true,
-              ),
-            ],
-          ),
-          generateSection(
-            title: text('On-screen tools', '屏幕工具'),
-            items: [
-              _switch(text('Drawing shortcuts', '绘图快捷键'), 'shortcuts'),
-              _switch(text('Zoom map', '缩放导航图'), 'minimap', fallback: true),
-              _switch(text('Diagnostics', '诊断信息'), 'diagnostics'),
-              _ActionRow(
-                title: text('Reset zoom', '重置缩放'),
-                onPressed: widget.onResetZoom,
-              ),
-            ],
-          ),
-          generateSection(
-            items: [
-              DecorationListItem(
-                title: Builder(
-                  builder: (context) => Text(
-                    text('Disconnect', '断开连接'),
-                    style: TextStyle(color: context.colorScheme.error),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      text('Display controls', '副屏控制'),
+                      style: AppTextStyle.headline.of(context),
+                    ),
                   ),
                 ),
-                onPressed: widget.onDisconnect,
+                _BarButton(
+                  label: text('Close', '关闭'),
+                  glyph: Glyphs.close,
+                  onPressed: widget.onClose,
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                spacing: 10,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+                    child: _StreamMetrics(
+                      state: widget.state,
+                      appearance: widget.appearance,
+                    ),
+                  ),
+                  _settings(context),
+                ],
               ),
-            ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: _touchHeight),
+                  child: TextButton(
+                    onPressed: widget.onDisconnect,
+                    child: Text(
+                      text('Disconnect', '断开连接'),
+                      style: TextStyle(color: context.colorScheme.error),
+                    ),
+                  ),
+                ),
+                if (_hasChanges)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: _touchHeight),
+                    child: FilledButton(
+                      onPressed: _apply,
+                      child: Text(text('Apply stream settings', '应用串流设置')),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),

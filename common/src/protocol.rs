@@ -207,9 +207,53 @@ pub const BITRATE_AUTO: u32 = 0;
 /// Client requests runtime update to target FPS and/or bitrate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamSettingsUpdate {
+    /// Zero follows the tablet panel rate; None keeps the current preference.
     pub target_fps: Option<u32>,
     /// `None` keeps the current setting, `Some(BITRATE_AUTO)` selects automatic bitrate.
     pub bitrate_kbps: Option<u32>,
+}
+
+/// Logical tablet orientation reported by Android or measured on the Windows display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DisplayOrientation {
+    Landscape,
+    Portrait,
+}
+
+impl DisplayOrientation {
+    pub fn from_dimensions(width: u32, height: u32) -> Self {
+        if height > width { Self::Portrait } else { Self::Landscape }
+    }
+}
+
+/// The tablet's current panel geometry and requested orientation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayRequest {
+    pub orientation: DisplayOrientation,
+    pub panel_width: u32,
+    pub panel_height: u32,
+    pub max_refresh_hz: u32,
+}
+
+impl DisplayRequest {
+    pub fn is_valid(&self) -> bool {
+        (100..=16384).contains(&self.panel_width)
+            && (100..=16384).contains(&self.panel_height)
+            && (30..=360).contains(&self.max_refresh_hz)
+    }
+}
+
+/// The host's current stream settings. Separate from ServerConfig, which configures the decoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamState {
+    pub stream_width: u32,
+    pub stream_height: u32,
+    pub refresh_hz: u32,
+    pub target_fps: u32,
+    pub bitrate_kbps: u32,
+    /// Zero means automatic; bitrate_kbps remains the current adaptive target.
+    pub manual_bitrate_kbps: u32,
+    pub orientation: DisplayOrientation,
 }
 
 /// How the host wants the connection authenticated.
@@ -282,6 +326,10 @@ pub enum ControlMessage {
     /// stop reconnecting by itself (otherwise two open devices would keep taking the screen from
     /// each other). Appended last so older clients, which ignore unknown messages, still work.
     SessionTaken { by_device: String },
+    /// Tablet asks the host to rotate the independent virtual display in the current session.
+    SetDisplayOrientation(DisplayRequest),
+    /// Latest authoritative display and encoding settings. Legacy peers ignore this variant.
+    StreamState(StreamState),
 }
 
 #[cfg(test)]

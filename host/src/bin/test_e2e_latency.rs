@@ -392,6 +392,7 @@ async fn main() -> Result<()> {
         let pkt = VideoPacket {
             data: Arc::new(vec![0x00, 0x00, 0x00, 0x01, if i == 0 { 0x05 } else { 0x01 }, i as u8, 0xFF, 0xAA]),
             pts_us: i as u64 * 8333,
+            stream_size: (1800, 1200),
             is_keyframe: i == 0,
             is_config: i == 0,
             captured_at: Instant::now(),
