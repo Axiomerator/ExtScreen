@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use extscreen_common::protocol::VideoCodec;
+use extscreen_common::{hex, ClientId};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -135,6 +136,7 @@ enum Request {
     RequestKeyframe,
     NewPin,
     ForgetTablets,
+    ForgetTablet(String),
     SetLocale(String),
     ResolveUsbApproval { id: u64, allow: bool },
     Exit,
@@ -296,6 +298,14 @@ async fn dispatch(request: Request, shared: &Arc<HostShared>) -> Value {
                 return failure(error);
             }
         }
+        Request::ForgetTablet(id) => {
+            let Some(client_id): Option<ClientId> = hex::decode_array(&id) else {
+                return failure("invalid_request");
+            };
+            if shared.pairing.forget_device(&client_id).is_err() {
+                return failure("settings_write_failed");
+            }
+        }
         Request::RequestKeyframe => shared.request_idr.store(true, Ordering::SeqCst),
         Request::NewPin => shared.pairing.rotate_pin(),
         Request::ForgetTablets => {
@@ -338,6 +348,7 @@ fn status(shared: &HostShared) -> Value {
         .unwrap_or_else(|e| e.into_inner());
     let stream = shared.stream_state();
     let (usb, lan) = network_addresses();
+    let paired = shared.pairing.device_entries();
     json!({
         "connected": connected,
         "display_driver": crate::driver_control::status(shared, connected),
@@ -366,7 +377,10 @@ fn status(shared: &HostShared) -> Value {
         "codec": match codec { VideoCodec::Hevc => "HEVC", VideoCodec::H264 => "H.264", VideoCodec::Av1 => "AV1" },
         "pin": shared.pairing.pin(),
         "pairing_paused_seconds": shared.pairing.pairing_paused().map(|left| left.as_secs().max(1)),
-        "paired_devices": shared.pairing.device_names(),
+        "paired_devices": paired.iter().map(|(_, name)| name).collect::<Vec<_>>(),
+        "paired_device_entries": paired.iter().map(|(id, name)| json!({
+            "id": hex::encode(id), "name": name
+        })).collect::<Vec<_>>(),
         "usb_addresses": usb,
         "lan_addresses": lan,
     })

@@ -131,6 +131,7 @@ if ($adb) { Ok "adb found." } else { Warn "adb not found (only needed for USB mo
 # 5. Tablet app
 Step 5 "Tablet app"
 $apk = @(
+    (Join-Path $root "dist\ExtScreen-Android.apk"),
     (Get-ChildItem (Join-Path $root "dist") -Filter "ExtScreen-*.apk" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName,
     (Join-Path $root "android\ExtScreen.apk"),
     (Join-Path $root "client\app\build\outputs\apk\release\app-release.apk"),

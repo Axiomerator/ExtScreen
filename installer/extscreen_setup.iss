@@ -18,7 +18,7 @@
 
 #define MyAppName "ExtScreen"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.4.0"
+  #define MyAppVersion "1.5.0"
 #endif
 #define MyAppPublisher "ExtScreen contributors"
 #define MyAppURL "https://github.com/Axiomerator/ExtScreen"
@@ -31,7 +31,7 @@
   #define HostExe "..\target\release\extscreen-host.exe"
 #endif
 #ifndef AndroidApk
-  #define AndroidApk "..\dist\ExtScreen-" + MyAppVersion + ".apk"
+  #define AndroidApk "..\dist\ExtScreen-Android.apk"
 #endif
 #define VddDir "{sd}\VirtualDisplayDriver"
 

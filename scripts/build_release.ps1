@@ -55,7 +55,8 @@ $gradleOutput = Get-Content -LiteralPath (Join-Path $apkDir 'output-metadata.jso
 $apk = Join-Path $apkDir $gradleOutput.elements[0].outputFile
 if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw "No APK produced in $apkDir" }
 if ($apk -like "*unsigned*") { Write-Warning "The APK is unsigned (no keystore configured); Android will not install it as is." }
-Copy-Item -LiteralPath $apk -Destination (Join-Path $dist "ExtScreen-$version.apk") -Force
+$androidApk = "ExtScreen-Android.apk"
+Copy-Item -LiteralPath $apk -Destination (Join-Path $dist $androidApk) -Force
 
 Step "Windows host"
 $defaultHostExe = Join-Path $root "target\release\extscreen-host.exe"
@@ -83,11 +84,11 @@ Step "Windows Prism dashboard"
 $dashboardDir = Join-Path $root 'ui\build\windows\x64\runner\Release'
 
 Step "Windows portable ZIP"
-$windowsZip = "ExtScreen-$version-Windows-x64.zip"
+$windowsZip = "ExtScreen-Windows-x64.zip"
 & (Join-Path $PSScriptRoot 'package_windows.ps1') -DashboardDir $dashboardDir -HostExe $hostExe -OutputZip (Join-Path $dist $windowsZip)
 
 Step "Checksums"
-$files = @("ExtScreen-$version.apk", $windowsZip)
+$files = @($androidApk, $windowsZip)
 $lines = foreach ($f in $files) {
     $hash = (Get-FileHash (Join-Path $dist $f) -Algorithm SHA256).Hash.ToLower()
     "$hash  $f"

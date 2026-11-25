@@ -100,6 +100,14 @@ Widget toolApp({
 
 上述布局对齐由 Prism 组件自己的尺寸和层级实现，调用端指定内容约束和平台规则。[FlClash 导航与路由约定][fl-architecture] · [Prism 导航 Dock][prism-dock] · [Prism 页面框架][prism-scaffold]
 
+### 主页面横移
+
+FlClash 的横移模式让 Dock 更新导航状态，再由内容区的 `PageController` 以 300 ms 和 `Curves.easeOut` 切页。`PageView` 的水平手势由 `NeverScrollableScrollPhysics` 禁用。Dock 镜片仍用独立的 Prism 弹簧，面板切页时 Dock 和侧栏保持在原位。ExtScreen 在窄窗口的 Dock 和宽窗口的侧栏使用同一节奏。[FlClash 页面控制器][fl-home] · [ExtScreen 页面容器](../ui/lib/destination_pages.dart)
+
+- 先更新目标索引，再在布局完成后滚动到目标页。动画中再次切换时，从当前位置直接滚向新目标。点已选中的项时保持当前页。用连续点击和反向点击验证过渡可以被打断。动画期间，仅目标页可接收输入和焦点。
+- 将页面容器放在导航之外，并保持它跨宽度断点的身份。窗口宽度变化时，将进行中的动画收束到选中的页。底部安全区与 Dock 留白继续由原页面负责，每个纵向滚动区各用稳定的 `PageStorageKey`。
+- 开启系统「减少动画」时立即切到目标页，中途开启亦收束到选中页。Android 的系统返回仍从设置回到连接页。连接订阅由外层持有，串流原生 `SurfaceView` 与悬浮控制处在独立入口。
+
 ## 4. 表面、密度、字阶与图标
 
 用 `SurfaceLevel` 描述相邻界面层。调用端在容器边界传递 `SurfaceScope`，由控件读取 `context.colorScheme` 和当前层级。这样同一个列表行可以在页面或较高的弹层中使用，在浅色和深色各自保持足够的层间区分。
@@ -268,6 +276,10 @@ DAWN 与小米 Pad 7 Ultra 的联调记录为 3200 × 2136 → 2136 × 3200 → 
 驱动可用性和当前视频来源是两个状态。用户连接后，`stream_mode: extended` 表示捕获源确实是受 ExtScreen 管理的虚拟副屏；`fallback` 表示当前在镜像主显示器。界面从当前捕获源显示「主显示器」或「虚拟显示器」。检查状态时，应实际连接并查看 Windows 的显示布局与捕获来源，再核对面板的提示。[捕获来源与模式发布](../host/src/capture/wgc.rs) · [状态字段生成](../host/src/driver_control.rs)
 
 
+### 单条配对管理
+
+Windows「概览 → 已配对设备」的每行在末尾放一个 Prism `IconButton`，并用设备名标注提示。点击后直接撤销这一条。控制面板以主机给出的稳定 ID 发出 `forget_tablet`，设备名可重复。主机保存成功后，面板根据下一次状态读取更新列表。保存失败时保留条目并显示错误。正在串流的会话可以继续，该设备在下次连接时重新配对。[Windows 配对分组](../ui/lib/windows_screen.dart) · [主机命令](../host/src/dashboard.rs) · [配对存储](../host/src/transport/pairing.rs)
+
 ## 8. 语言和主题
 
 `AppearanceController` 管理语言与深浅色，由 `PrismApp` 读取，页面从同一偏好取得本地化文字。Android 通过小型通道把偏好写到原生首选项，两条 Flutter 启动路径分别载入。Windows 保存到用户本地应用数据目录。首次打开默认选中「跟随系统」，持续响应系统主题变化。已有 `dark: bool` 迁移为明确的深色或浅色，保留用户原选择；`themeMode` 中显式保存 `system`、`light` 或 `dark`。Windows 标题栏与 Android 系统栏使用实际亮度，避免把「跟随系统」当作某个固定颜色。主题切换保持当前目的地和原生连接。
@@ -318,6 +330,8 @@ cargo build --release --locked --bin extscreen-host
 ```
 
 Android 调试输出见 `client\app\build\outputs\apk\debug\app-debug.apk`。Windows 面板位于 `ui\build\windows\x64\runner\Release\`，依赖同目录的 DLL 和 `data\`，安装时按整个目录部署。发布签名、Cargo Android ABI、Windows 便携 ZIP 和输出目录见 [README 构建说明](../README.md#从源码构建)。调试真机与发布通用 APK 分别验证支持的 ABI。构建产物、Pub 缓存、Java/Android SDK 路径与签名配置属于本机环境，依赖版本和锁文件归项目维护。
+
+导航回归需覆盖手机 Dock、平板侧栏和 Windows 两种宽度。检查正反方向的中间帧、连续点击、拖动窗口跨断点、系统减少动画和返回原页面后保留的滚动位置。配对管理用两条同名、不同 ID 的测试记录，验证点击行尾按钮后只删除对应记录，重启主机仍生效。
 
 ### Windows 便携包的路径约定
 

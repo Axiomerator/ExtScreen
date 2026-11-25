@@ -23,8 +23,8 @@ android {
         applicationId = "com.extscreen"
         minSdk = 26 // Android 8.0 Oreo+ for MediaCodec low latency and modern NDK
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.4.0"
+        versionCode = 8
+        versionName = "1.5.0"
 
         ndk {
             // 64-bit and 32-bit ARM phones/tablets, plus x86_64 (Chromebooks, emulators).

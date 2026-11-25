@@ -141,6 +141,13 @@ where
         bail!("'{}' failed authentication ({mode:?}, {reason:?})", hello.device_name);
     }
 
+    if mode == AuthMode::Resume
+        && !store.device_secret(&hello.client_id).is_some_and(|secret| secret.as_slice() == password)
+    {
+        send_control(writer, &ControlMessage::AuthReject(AuthRejectReason::UnknownDevice)).await?;
+        bail!("'{}' no longer has the paired credential used in this handshake", hello.device_name);
+    }
+
     let new_secret = if mode == AuthMode::Pair {
         match store.complete_pairing(hello.client_id, &hello.device_name) {
             Some(secret) => Some(secret),
@@ -288,6 +295,46 @@ mod tests {
         let (host, _) = run(&store, USB, AuthMode::Resume, b"").await;
         assert!(host.is_err());
         assert_eq!(store.device_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_device_rejects_its_pending_resume() {
+        let store = PairingStore::load(None);
+        let hello = hello();
+        let secret = store.complete_pairing(hello.client_id, &hello.device_name).unwrap();
+        let (host_side, tablet_side) = duplex(16 * 1024);
+        let (hr, mut hw) = split(host_side);
+        let (tr, mut tw) = split(tablet_side);
+        let mut host_reader = PacketReader::new(hr, None);
+        let mut tablet_reader = PacketReader::new(tr, None);
+        let (host, ()) = tokio::join!(
+            host_handshake(&mut host_reader, &mut hw, NETWORK_PEER, &store, "TEST-PC"),
+            async {
+                send_control(&mut tw, &ControlMessage::ClientHello(hello.clone())).await.unwrap();
+                let ControlMessage::HelloAck(ack) = recv_control(&mut tablet_reader).await.unwrap() else {
+                    panic!("expected HelloAck");
+                };
+                let (pake, msg) = PakeClient::start(&secret, &ack.host_id);
+                send_control(&mut tw, &ControlMessage::AuthStart {
+                    mode: AuthMode::Resume,
+                    spake_msg: msg.clone(),
+                }).await.unwrap();
+                let ControlMessage::AuthReply { spake_msg } = recv_control(&mut tablet_reader).await.unwrap() else {
+                    panic!("expected AuthReply");
+                };
+                store.forget_device(&hello.client_id).unwrap();
+                let key = pake.finish(&spake_msg).unwrap();
+                let t = transcript(&hello.client_id, &ack.host_id, &msg, &spake_msg);
+                send_control(&mut tw, &ControlMessage::AuthConfirm {
+                    confirm: key.confirmation(Role::Client, &t),
+                }).await.unwrap();
+                assert!(matches!(
+                    recv_control(&mut tablet_reader).await.unwrap(),
+                    ControlMessage::AuthReject(AuthRejectReason::UnknownDevice)
+                ));
+            }
+        );
+        assert!(host.is_err());
     }
 
     #[tokio::test]

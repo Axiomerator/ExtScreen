@@ -18,7 +18,7 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 - **Prism UI。** Windows 和安卓共享 Flutter + Prism UI 控件。安卓连接页适配手机和平板，串流中可通过液态玻璃浮层调整控制选项。两端都可在「设置 → 外观」中选择简体中文或 English、跟随系统、浅色或深色。首次启动默认跟随系统。
 
 - **Windows 扩展显示。** Windows 会识别到一块独立的显示器，可以在系统设置里调整位置，并把窗口拖到平板上。驱动支持设备面板分辨率时可以逐像素显示。虚拟屏支持 60–144 Hz，实际可用模式取决于设备和驱动。
-- **USB 有线和局域网。** 支持 USB 网络共享、Wi-Fi 和 ADB 直连。通过 USB 网络共享连接时，电脑会自动发现设备所在的链路，码率最高可达 120 Mbps。USB 网络共享和局域网可直接使用便携包。已通过 PIN 配对的设备会自动重连。
+- **USB 有线和局域网。** 支持 USB 网络共享、Wi-Fi 和 ADB 直连。通过 USB 网络共享连接时，电脑会自动发现设备所在的链路，码率最高可达 120 Mbps。USB 网络共享和局域网可直接使用便携包。已通过 PIN 配对的设备会自动重连。在 Windows「概览 → 已配对设备」点击设备右侧的移除按钮，可以撤销单台设备的配对。该设备下次连接时需要重新配对。
 - **鼠标光标。** 在平板本地绘制 Windows 光标，静止画面上也能及时显示位置变化。触控和用笔时显示落点指示器，移动鼠标后恢复鼠标光标。`.ani` 动态皮肤在平板端显示首帧图形。
 - **触控笔与多点触控。** 支持笔压曲线、倾斜、悬停、笔身按键映射为右键或橡皮擦，以及仅用笔模式、双指滚动和捏合缩放。
 - **低延迟串流。** Windows 端使用 GPU 采集，优先使用硬件 HEVC 或 H.264 编码。安卓端硬件解码。串流支持自适应码率，笔下可显示本地预绘笔迹。
@@ -35,13 +35,13 @@ ExtScreen 基于 [Hrisit Roy](https://github.com/24f2006988) 的开源项目，�
 
 ## 快速开始
 
-升级时先从系统托盘退出旧版，再把新的 Windows ZIP 完整解压到新目录。已安装且正常的 MttVDD 驱动会继续使用。
+升级时先从系统托盘退出旧版，再把新的 Windows ZIP 完整解压到原目录并覆盖同名文件。首次安装时选一个目录完整解压。已安装且正常的 MttVDD 驱动会继续使用。
 
 如发布页暂未提供所需发行包，可按[从源码构建](#从源码构建)操作。
 
-1. 在 Windows 上，从[发布页](https://github.com/Axiomerator/ExtScreen/releases)下载 `ExtScreen-<version>-Windows-x64.zip`，完整解压后双击 `ExtScreen.exe`。包内已带 Flutter、Visual C++ 运行库和已签名的 MttVDD 驱动。控制面板会自动启动主机并显示 6 位配对 PIN，也可通过系统托盘图标重新打开。
+1. 在 Windows 上，下载 [ExtScreen-Windows-x64.zip](https://github.com/Axiomerator/ExtScreen/releases/latest/download/ExtScreen-Windows-x64.zip)，完整解压后双击 `ExtScreen.exe`。包内已带 Flutter、Visual C++ 运行库和已签名的 MttVDD 驱动。控制面板会自动启动主机并显示 6 位配对 PIN，也可通过系统托盘图标重新打开。
 2. 若概览提示虚拟显示驱动未安装，点击 **安装驱动**，并在 Windows 提示中确认管理员权限。也可在 **设置 → 虚拟显示驱动** 安装或卸载驱动。驱动就绪后，下一次连接会尝试将平板作为扩展屏使用。
-3. 下载并在安卓设备上安装 `ExtScreen-<version>.apk`。如果系统提示，允许当前安装来源。由早期调试或验收版改装正式发行版时，Android 要求先卸载签名不同的旧包。卸载会清除旧版设置和配对。
+3. 下载 [ExtScreen-Android.apk](https://github.com/Axiomerator/ExtScreen/releases/latest/download/ExtScreen-Android.apk) 并在安卓设备上安装。如果系统提示，允许当前安装来源。由早期调试或验收版改装正式发行版时，Android 要求先卸载签名不同的旧包。卸载会清除旧版设置和配对。
 4. 按所用方式连接。
    - **USB 网络共享（推荐给支持该功能的设备）**。插上数据线，在安卓端点击 **开启 USB 网络共享**，开启系统设置中的 USB 网络共享，再回到 ExtScreen。在 **USB** 分区中选中电脑，首次连接输入控制面板上的 PIN。以后插线并开启共享时，已配对设备可以自动连接。
    - **Wi-Fi 或局域网**。在安卓端的 **局域网** 中选中电脑，或手动输入电脑的 IPv4 地址。首次连接时输入 PIN。
@@ -90,7 +90,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 .\scripts\build_release.ps1
 ```
 
-发布脚本运行测试，在 `dist\` 中生成 Android APK、Windows 便携 ZIP 和 `SHA256SUMS.txt`。需要单独生成本机验收包时，可传入 `-OutputDirectory .\dist\validation`。分步开发时，三个构建命令可分别执行。
+发布脚本运行测试，在 `dist\` 中生成 `ExtScreen-Android.apk`、`ExtScreen-Windows-x64.zip` 和 `SHA256SUMS.txt`。GitHub 发布沿用相同的附件名称。需要单独生成本机验收包时，可传入 `-OutputDirectory .\dist\validation`。分步开发时，三个构建命令可分别执行。
 
 ```powershell
 cargo build --release --locked --bin extscreen-host

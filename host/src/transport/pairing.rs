@@ -11,6 +11,7 @@
 //! multiply the guess rate. Pressing "New PIN" on the dashboard ends the current pause.
 
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -115,7 +116,8 @@ impl PairingStore {
             usb_denied: Mutex::new(HashMap::new()),
         };
         if created {
-            store.persist(&store.lock());
+            let inner = store.lock();
+            let _ = store.persist(&inner.host_id, &inner.devices);
         }
         store
     }
@@ -136,8 +138,8 @@ impl PairingStore {
         self.lock().devices.len()
     }
 
-    pub fn device_names(&self) -> Vec<String> {
-        self.lock().devices.iter().map(|d| d.name.clone()).collect()
+    pub fn device_entries(&self) -> Vec<(ClientId, String)> {
+        self.lock().devices.iter().map(|d| (d.client_id, d.name.clone())).collect()
     }
 
     pub fn device_secret(&self, client_id: &ClientId) -> Option<DeviceSecret> {
@@ -256,7 +258,7 @@ impl PairingStore {
         Self::rotate(&mut inner);
         inner.lockouts = 0;
         inner.paused_until = None;
-        self.persist(&inner);
+        let _ = self.persist(&inner.host_id, &inner.devices);
         info!("Paired new device '{name}' ({} paired in total)", inner.devices.len());
         Some(secret)
     }
@@ -265,23 +267,40 @@ impl PairingStore {
         let mut inner = self.lock();
         inner.devices.clear();
         Self::rotate(&mut inner);
-        self.persist(&inner);
+        let _ = self.persist(&inner.host_id, &inner.devices);
         info!("All paired devices forgotten");
     }
 
-    fn persist(&self, inner: &Inner) {
-        let Some(path) = &self.path else { return };
-        let write = || -> std::io::Result<()> {
+    pub fn forget_device(&self, client_id: &ClientId) -> io::Result<()> {
+        let mut inner = self.lock();
+        if !inner.devices.iter().any(|device| &device.client_id == client_id) {
+            return Ok(());
+        }
+        let remaining: Vec<_> = inner.devices.iter()
+            .filter(|device| &device.client_id != client_id)
+            .cloned()
+            .collect();
+        // A deletion only takes effect when it also survives restarting the host.
+        self.persist(&inner.host_id, &remaining)?;
+        inner.devices = remaining;
+        Ok(())
+    }
+
+    fn persist(&self, host_id: &HostId, devices: &[PairedDevice]) -> io::Result<()> {
+        let Some(path) = &self.path else { return Ok(()) };
+        let write = || -> io::Result<()> {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
             let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, serialize(inner))?;
+            std::fs::write(&tmp, serialize(host_id, devices))?;
             std::fs::rename(&tmp, path)
         };
-        if let Err(e) = write() {
+        let result = write();
+        if let Err(e) = &result {
             warn!("Could not save pairing data to {}: {e}", path.display());
         }
+        result
     }
 }
 
@@ -292,9 +311,9 @@ pub fn sanitize_name(name: &str) -> String {
     if clean.trim().is_empty() { "Tablet".to_string() } else { clean }
 }
 
-fn serialize(inner: &Inner) -> String {
-    let mut out = format!("host_id {}\n", hex::encode(&inner.host_id));
-    for d in &inner.devices {
+fn serialize(host_id: &HostId, devices: &[PairedDevice]) -> String {
+    let mut out = format!("host_id {}\n", hex::encode(host_id));
+    for d in devices {
         out.push_str(&format!("device {} {} {}\n", hex::encode(&d.client_id), hex::encode(&d.secret), d.name));
     }
     out
@@ -339,7 +358,7 @@ mod tests {
         let reloaded = PairingStore::load(Some(path.clone()));
         assert_eq!(reloaded.host_id(), store.host_id());
         assert_eq!(reloaded.device_secret(&[5; 16]), Some(secret));
-        assert_eq!(reloaded.device_names(), vec!["Pad 7Pro".to_string()]);
+        assert_eq!(reloaded.device_entries(), vec![([5; 16], "Pad 7Pro".to_string())]);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -415,7 +434,45 @@ mod tests {
         let store = PairingStore::load(None);
         let evil = format!("x\ndevice {} {} injected", "00".repeat(16), "11".repeat(32));
         store.complete_pairing([1; 16], &evil).unwrap();
-        assert_eq!(parse(&serialize(&store.lock())).1.len(), 1);
+        let inner = store.lock();
+        assert_eq!(parse(&serialize(&inner.host_id, &inner.devices)).1.len(), 1);
+    }
+
+    #[test]
+    fn forget_device_removes_only_the_selected_credential_after_restart() {
+        let path = temp_path("forget-one");
+        let store = PairingStore::load(Some(path.clone()));
+        let removed = [3; 16];
+        let kept = [4; 16];
+        store.complete_pairing(removed, "Same name").unwrap();
+        let other_secret = store.complete_pairing(kept, "Same name").unwrap();
+        let pin = store.pin();
+
+        store.forget_device(&removed).unwrap();
+        store.forget_device(&removed).unwrap();
+
+        assert_eq!(store.pin(), pin);
+        assert_eq!(store.device_secret(&removed), None);
+        let reloaded = PairingStore::load(Some(path.clone()));
+        assert_eq!(reloaded.host_id(), store.host_id());
+        assert_eq!(reloaded.device_entries(), vec![(kept, "Same name".to_string())]);
+        assert_eq!(reloaded.device_secret(&kept), Some(other_secret));
+        assert_eq!(reloaded.device_secret(&removed), None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn forget_device_keeps_the_record_if_saving_fails() {
+        let path = temp_path("forget-write-failure");
+        let store = PairingStore::load(Some(path.clone()));
+        let id = [3; 16];
+        let secret = store.complete_pairing(id, "Tablet").unwrap();
+        std::fs::create_dir(path.with_extension("tmp")).unwrap();
+
+        assert!(store.forget_device(&id).is_err());
+        assert_eq!(store.device_secret(&id), Some(secret));
+        assert_eq!(PairingStore::load(Some(path.clone())).device_secret(&id), Some(secret));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

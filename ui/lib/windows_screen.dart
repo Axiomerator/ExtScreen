@@ -7,6 +7,7 @@ import 'package:prism_ui/icons/icons.dart';
 import 'package:prism_ui/prism_ui.dart' as p;
 
 import 'appearance.dart';
+import 'destination_pages.dart';
 import 'windows_bridge.dart';
 
 const _mobileWidth = 600.0;
@@ -534,13 +535,34 @@ class _WindowsScreenState extends State<WindowsScreen> {
     );
   }
 
+  Widget _pairedDevice(String name, String? id) {
+    return p.DecorationListItem(
+      leading: const GlyphIcon(_WindowsGlyphs.tablet, size: 20),
+      title: Text(name),
+      trailing: id == null
+          ? null
+          : p.IconButton(
+              key: ValueKey('forget-tablet-$id'),
+              tooltip: t('Forget $name', '移除 $name'),
+              icon: const GlyphIcon(_WindowsGlyphs.trash, size: 18),
+              onPressed: _working ? null : () => _command('forget_tablet', id),
+            ),
+    );
+  }
+
   Widget _pairing() {
     final colors = p.Theme.of(context).colorScheme;
     final rawPin = _status?['pin'] as String?;
     final pin = rawPin != null && rawPin.isNotEmpty ? rawPin : null;
     final paused = _status?['pairing_paused_seconds'] as int?;
-    final paired =
+    final legacyNames =
         (_status?['paired_devices'] as List?)?.cast<String>() ?? const [];
+    final paired =
+        (_status?['paired_device_entries'] as List?)
+            ?.cast<Map<String, dynamic>>() ??
+        [
+          for (final name in legacyNames) {'name': name},
+        ];
     final port = _status?['port'] as int?;
     String addresses(String key) =>
         ((_status?[key] as List?)?.cast<String>() ?? const []).join(', ');
@@ -630,7 +652,7 @@ class _WindowsScreenState extends State<WindowsScreen> {
                 glyph: _WindowsGlyphs.tablet,
               ),
             for (final device in paired)
-              _row(device, glyph: _WindowsGlyphs.tablet),
+              _pairedDevice(device['name'] as String, device['id'] as String?),
           ]),
       ],
     );
@@ -945,7 +967,13 @@ class _WindowsScreenState extends State<WindowsScreen> {
     ],
   );
 
-  Widget _page(BuildContext context, String title, double inset, bool dock) {
+  Widget _page(
+    BuildContext context,
+    String title,
+    int index,
+    double inset,
+    bool dock,
+  ) {
     const idle = AlwaysStoppedAnimation(false);
     return p.PrismScaffold(
       bar: p.ScaffoldBar(
@@ -955,46 +983,32 @@ class _WindowsScreenState extends State<WindowsScreen> {
         builder: (_) => p.AppBar(titleSpacing: inset, title: Text(title)),
       ),
       body: p.AppBarClearance(
-        child: AnimatedSwitcher(
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 160),
-          switchInCurve: p.Easing.standard,
-          switchOutCurve: p.Easing.standard,
-          layoutBuilder: (active, outgoing) => Stack(
-            fit: StackFit.expand,
-            children: [
-              for (final child in outgoing) IgnorePointer(child: child),
-              if (active != null) active,
-            ],
+        child: SingleChildScrollView(
+          key: PageStorageKey(index),
+          padding: EdgeInsets.fromLTRB(
+            inset,
+            8,
+            inset,
+            dock ? p.NavigationDock.insetOf(context) + 12 : 20,
           ),
-          child: SingleChildScrollView(
-            key: PageStorageKey(_destination),
-            padding: EdgeInsets.fromLTRB(
-              inset,
-              8,
-              inset,
-              dock ? p.NavigationDock.insetOf(context) + 12 : 20,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_error case final error?)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Semantics(
-                      liveRegion: true,
-                      child: p.Card(
-                        inert: true,
-                        isError: true,
-                        padding: const EdgeInsets.all(12),
-                        child: Text(_errorText(error)),
-                      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error case final error?)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: p.Card(
+                      inert: true,
+                      isError: true,
+                      padding: const EdgeInsets.all(12),
+                      child: Text(_errorText(error)),
                     ),
                   ),
-                if (_destination == 0) _overview() else _preferences(),
-              ],
-            ),
+                ),
+              if (index == 0) _overview() else _preferences(),
+            ],
           ),
         ),
       ),
@@ -1063,11 +1077,16 @@ class _WindowsScreenState extends State<WindowsScreen> {
                         fit: StackFit.expand,
                         children: [
                           FocusTraversalGroup(
-                            child: _page(
-                              context,
-                              _destination == 0 ? overview : settings,
-                              inset,
-                              compact,
+                            child: DestinationPages(
+                              index: _destination,
+                              itemCount: 2,
+                              itemBuilder: (context, index) => _page(
+                                context,
+                                index == 0 ? overview : settings,
+                                index,
+                                inset,
+                                compact,
+                              ),
                             ),
                           ),
                           if (compact)
@@ -1112,6 +1131,13 @@ abstract final class _WindowsGlyphs {
   static const tablet = Glyph([
     GlyphBox(4, 3, 20, 21, 2),
     GlyphPath('M10 18 H14', role: GlyphRole.line),
+  ]);
+  static const trash = Glyph([
+    GlyphPath(
+      'M4 6 H20 M9 6 V4 H15 V6 M6 6 L7 18 Q7 20 9 20 H15 '
+      'Q17 20 17 18 L18 6 M10 10 V16 M14 10 V16',
+      role: GlyphRole.line,
+    ),
   ]);
   static const settings = Glyph([
     GlyphPath(

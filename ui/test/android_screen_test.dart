@@ -106,8 +106,25 @@ void main() {
         attempts.lastWhere((call) => call.method == 'connect').arguments,
         containsPair('hostId', 'test'),
       );
-      await tester.tap(find.text('Settings').hitTestable().first);
+      final dock = find.byType(prism.NavigationDock);
+      final navigation = dock.evaluate().isNotEmpty
+          ? dock
+          : find.byType(prism.NavigationSidebar);
+      final navLeft = tester.getTopLeft(navigation).dx;
+      final pageLeft = tester.getTopLeft(find.byType(prism.AppBar)).dx;
+      await tester.tap(
+        find.descendant(of: navigation, matching: find.text('Settings')),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final pageBars = find.byType(prism.AppBar);
+      expect(pageBars, findsNWidgets(2));
+      expect(tester.getTopLeft(pageBars.first).dx, lessThan(pageLeft));
+      expect(tester.getTopLeft(pageBars.last).dx, greaterThan(pageLeft));
+      expect(tester.getTopLeft(navigation).dx, navLeft);
       await tester.pumpAndSettle();
+      expect(tester.getTopLeft(pageBars).dx, pageLeft);
       await tester.tap(find.text('Language'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('简体中文'));

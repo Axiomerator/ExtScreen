@@ -9,6 +9,7 @@ import 'package:prism_ui/prism_ui.dart' as p;
 
 class _Host implements HostBridge {
   final calls = <(String, Object?)>[];
+  final devices = <String, String>{'first': 'Tablet'};
   int fps = 120;
   bool connected = true;
   bool portrait = false;
@@ -29,6 +30,7 @@ class _Host implements HostBridge {
   Future<Map<String, dynamic>> request(String command, [Object? value]) async {
     calls.add((command, value));
     if (command == 'set_fps') fps = value as int;
+    if (command == 'forget_tablet') devices.remove(value);
     if (command == 'install_display_driver')
       driver?['operation'] = 'installing';
     if (command == 'uninstall_display_driver')
@@ -49,7 +51,11 @@ class _Host implements HostBridge {
           'codec': 'HEVC',
           'pin': '123456',
           'port': 59100,
-          'paired_devices': ['Tablet'],
+          'paired_devices': devices.values.toList(),
+          'paired_device_entries': [
+            for (final device in devices.entries)
+              {'id': device.key, 'name': device.value},
+          ],
           if (driver != null) 'display_driver': {...driver!},
         },
     };
@@ -77,6 +83,28 @@ Widget _app(AppearanceController appearance, _Host host) => p.PrismApp(
 );
 
 void main() {
+  testWidgets('forget action directly removes only the selected device ID', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1080, 900);
+    addTearDown(tester.view.reset);
+    final host = _Host()..devices['second'] = 'Tablet';
+    await tester.pumpWidget(_app(AppearanceController.inMemory(), host));
+    await tester.pumpAndSettle();
+    final first = find.byKey(const ValueKey('forget-tablet-first'));
+    final second = find.byKey(const ValueKey('forget-tablet-second'));
+    await tester.ensureVisible(second);
+    await tester.tap(second);
+    await tester.pumpAndSettle();
+    expect(find.byType(p.AlertDialog), findsNothing);
+    expect(host.calls.where((call) => call.$1 == 'forget_tablet'), [
+      ('forget_tablet', 'second'),
+    ]);
+    expect(second, findsNothing);
+    expect(first, findsOneWidget);
+  });
+
   test('theme preferences default to system and keep legacy overrides', () {
     expect(AppearanceController.themeModeFrom({}), p.ThemeMode.system);
     expect(

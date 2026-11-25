@@ -6,6 +6,7 @@ import 'package:prism_ui/icons/icons.dart';
 import 'package:prism_ui/prism_ui.dart';
 
 import 'appearance.dart';
+import 'destination_pages.dart';
 
 part 'stream_overlay.dart';
 
@@ -245,10 +246,6 @@ class _AndroidScreenState extends State<AndroidScreen> {
         final connections = text('Connections', '连接');
         final settings = text('Settings', '设置');
         final section = _settings ? 1 : 0;
-        final page = _PrismPage(
-          title: _settings ? settings : connections,
-          body: _settings ? _appearance() : _connections(),
-        );
         return PopScope(
           canPop: !_settings,
           onPopInvokedWithResult: (didPop, _) {
@@ -256,61 +253,71 @@ class _AndroidScreenState extends State<AndroidScreen> {
           },
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (context.isMobileView) {
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    BottomInsetScope(
-                      inset: NavigationDock.insetOf(context),
-                      child: page,
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: NavigationDock(
-                        destinations: [
-                          NavigationDockDestination(
-                            glyph: _displayGlyph,
-                            label: connections,
-                          ),
-                          NavigationDockDestination(
-                            glyph: _settingsGlyph,
-                            label: settings,
-                          ),
-                        ],
-                        selectedIndex: section,
-                        onSelected: _select,
-                      ),
-                    ),
-                  ],
-                );
-              }
+              final dock = context.isMobileView;
               final canExpand = constraints.maxWidth >= 940;
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  NavigationSidebar(
-                    destinations: [
-                      SidebarDestination(
-                        glyph: _displayGlyph,
-                        label: connections,
-                      ),
-                      SidebarDestination(
-                        glyph: _settingsGlyph,
-                        label: settings,
-                      ),
-                    ],
-                    selectedIndex: section,
-                    expanded: canExpand && _sidebarExpanded,
-                    onSelected: _select,
-                    onToggle: canExpand
-                        ? () => setState(
-                            () => _sidebarExpanded = !_sidebarExpanded,
-                          )
-                        : null,
+                  if (!dock)
+                    NavigationSidebar(
+                      destinations: [
+                        SidebarDestination(
+                          glyph: _displayGlyph,
+                          label: connections,
+                        ),
+                        SidebarDestination(
+                          glyph: _settingsGlyph,
+                          label: settings,
+                        ),
+                      ],
+                      selectedIndex: section,
+                      expanded: canExpand && _sidebarExpanded,
+                      onSelected: _select,
+                      onToggle: canExpand
+                          ? () => setState(
+                              () => _sidebarExpanded = !_sidebarExpanded,
+                            )
+                          : null,
+                    ),
+                  Expanded(
+                    key: const ValueKey('destinations'),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        BottomInsetScope(
+                          inset: dock ? NavigationDock.insetOf(context) : 0,
+                          child: DestinationPages(
+                            index: section,
+                            itemCount: 2,
+                            itemBuilder: (context, index) => _PrismPage(
+                              title: index == 0 ? connections : settings,
+                              body: index == 0 ? _connections() : _appearance(),
+                            ),
+                          ),
+                        ),
+                        if (dock)
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: NavigationDock(
+                              destinations: [
+                                NavigationDockDestination(
+                                  glyph: _displayGlyph,
+                                  label: connections,
+                                ),
+                                NavigationDockDestination(
+                                  glyph: _settingsGlyph,
+                                  label: settings,
+                                ),
+                              ],
+                              selectedIndex: section,
+                              onSelected: _select,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                  Expanded(child: page),
                 ],
               );
             },
